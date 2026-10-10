@@ -1,0 +1,200 @@
+﻿# Task 1 — SpaceObject base class · Learned Lessons & Concepts
+
+> The "how does it actually work" view. Each section explains a concept used in the
+> Task 1 design, with *why it matters for this course*.
+
+---
+
+## 1. Inheritance in C# — the vocabulary
+
+**`class B : A`** — B "is-a" A. B inherits A's fields, properties and methods.
+
+**`abstract class`** — Cannot be instantiated ("new"ed or attached to a GameObject).
+Exists to be inherited from. May contain abstract members.
+
+**`abstract void DoX()`** — A declaration WITHOUT a body. Every non-abstract subclass
+MUST implement it. Compiler-enforced.
+
+**`virtual void DoX() { … }`** — Has a body, and subclasses MAY replace it.
+Default behavior is provided by the base.
+
+**`override void DoX()`** — The subclass's replacement of a virtual/abstract method.
+
+**`sealed`** — Forbids further overriding (you won't need it in this course).
+
+**`base.DoX()`** — Calls the BASE CLASS implementation from inside an override — how
+you "extend" instead of "replace" (e.g. Enemy.Despawn() does extra work, then calls
+base.Despawn()).
+
+**The decision rule (used in our design):**
+- Behavior EVERY subclass has, and it's IDENTICAL → normal method in the base class.
+- Behavior EVERY subclass has, but DIFFERENT → virtual in base, override in subclass.
+- Behavior EVERY subclass has, and the base CANNOT provide a sensible default →
+  abstract in base.
+- Behavior ONLY SOME subclasses have → DON'T put it in the base class at all. Give
+  those subclasses their own method, and/or an interface (§3).
+
+## 2. Why SpaceObject is abstract (and what that buys you)
+
+An abstract class answers the question "what do ALL these things have in common?"
+without pretending to be one of them. Consequences in Unity:
+
+1. You can never accidentally attach "bare SpaceObject" to a player ship — the
+   Inspector only lets you pick concrete classes. THE COMPILER ENFORCES YOUR DESIGN.
+2. A reference typed as SpaceObject can hold a player, an enemy, a bullet, or a
+   power-up — that's what makes "treat everything uniformly" possible (e.g. the
+   collision adapter in the base class, or later a List<SpaceObject> of all active
+   enemies).
+3. This is the difference between Unity's COMPONENT model and C#'s TYPE SYSTEM:
+   Unity doesn't care about your class hierarchy at runtime (a component is just a
+   component), but C# lets you program against the COMMON PART and let the runtime
+   dispatch to the right override.
+
+## 3. Interfaces: "can-do" vs. "is-a"
+
+```csharp
+public interface IDamageable { void TakeDamage(int amount); }
+```
+
+- PlayerController and Enemy IMPLEMENT it. Obstacle and Collectable do NOT.
+- Any code that deals damage writes: `if (other is IDamageable d) d.TakeDamage(n);`
+  This is a TYPE CHECK — fully compliant with the "no tags, use types" rule (§2.3),
+  and it's MORE precise than checking `other is Enemy`, because a future boss or a
+  destructible obstacle just needs to implement the interface.
+- Interfaces have NO fields/state, no constructors, no MonoBehaviour-ness — they are
+  pure C# contracts. That keeps them 100% portable (§2.4's goal).
+- RULE OF THUMB: inheritance = "is a kind of…"; interface = "can do…". One object
+  can implement many interfaces, but in C# can only inherit ONE class.
+
+## 4. Access levels — answering the task's "millä tasolla" question
+
+**`private`** — the class itself (and its partials) can see it.
+→ DEFAULT CHOICE. Internal state: isActive, health.
+
+**`protected`** — the class AND its subclasses can see it.
+→ Hooks the base class wants subclasses to fill in / call: OnCollision, Move,
+  GetAimDirection. NOT part of the public API — game code never calls enemy.Move()
+  directly.
+
+**`public`** — anyone can see it.
+→ The API: things the game genuinely needs from outside: TakeDamage, Activate,
+  Fire, Collect. Keep this surface SMALL.
+
+**`internal`** — same assembly only.
+→ Exists in C#, but Unity has one assembly (Assembly-CSharp) → behaves like public
+  here; avoid it.
+
+**Encapsulation principle used everywhere in the design:** fields are private,
+behaviors are public, extension points are protected. External code can ASK the
+object to do things, but can never reach into its state. That's what makes you able
+to change the internals later (e.g. swap `int health` for a component) without
+breaking the rest of the game.
+
+## 5. Unity lifecycle — why the base class must be a MonoBehaviour
+
+Only MonoBehaviours receive UNITY MESSAGE CALLBACKS: Awake, Start, Update,
+OnTriggerEnter2D, OnCollisionEnter2D, OnDestroy… The engine calls these by NAME
+(magical method calls), not by your code.
+
+So: the collision adapter (OnTriggerEnter2D) MUST live on a MonoBehaviour — that's
+the single, concrete reason SpaceObject : MonoBehaviour (justifies §2.4). Everything
+that is PURE LOGIC (health math, weapon stats, wave data) stays in plain C# or in
+non-Unity members — portable, testable, editor-independent.
+
+**Message order you should know** (per object, per frame):
+Awake → (OnEnable) → Start → Update → LateUpdate → (fixed steps).
+
+Collision callbacks like OnTriggerEnter2D fire BETWEEN Update and LateUpdate, after
+the physics step. Practical consequence: in a collision handler you may immediately
+Despawn()/Destroy the other object — that's the intended time.
+
+## 6. Collisions vs. Triggers — and the isTrigger gotcha
+
+- **Collider2D with isTrigger = false** → SOLID. Unity reports OnCollisionEnter2D.
+  Objects physically push each other.
+- **Collider2D with isTrigger = true** → OVERLAP-ONLY. Unity reports
+  OnTriggerEnter2D. No physical response.
+
+In a shoot 'em up you typically use TRIGGERS for bullet/enemy overlap (you don't
+want bullets to physically bounce the enemy) and solid colliders where something
+should BLOCK movement. The design uses OnTriggerEnter2D — so your colliders must be
+set to "Is Trigger" in the prefab (Unity-side action; it's a component setting, not
+code — and it's allowed by §2.2 since it's a Unity built-in component).
+
+## 7. "Active state" ≠ GameObject.activeSelf — why the task insists on both
+
+- **GameObject.activeSelf** = Unity's EXISTENCE switch. An inactive object receives
+  NO messages (no Update, no collisions) and renders nothing.
+- **SpaceObject.IsActive** = GAME-STATE switch. A dead enemy could still be "active"
+  in Unity for a moment while its death effect plays, or a bullet might be "spent"
+  but still in the world this frame.
+
+Two independent switches, two jobs. The task explicitly warns they are NOT THE SAME
+THING — the design keeps them separate: Deactivate() flips the game-state flag (and
+later, when appropriate, calls Object.SetActive(false) or Despawn()).
+The guard `if (!IsActive || !other.IsActive) return;` in the collision adapter is
+the one place this matters, and it's written ONCE in the base class — that's the
+"common part of every collision" the task's question was fishing for.
+
+## 8. Despawn() ≠ Object.Destroy — the task's other explicit distinction
+
+- **Object.Destroy(obj)** = Unity's raw teardown. Gotcha: Destroy is DEFERRED — the
+  object lives until end of frame (or next physics step). Calling it on the OTHER
+  object inside a collision is fine, but relying on it being gone immediately is not.
+- **Object.DestroyImmediate** = instant, editor-only — NEVER use in game code.
+- **Our Despawn()** = the object's OWN REMOVAL RITUAL, defined in SpaceObject:
+  1. Deactivate() (flip game-state, stop reacting)
+  2. (subclass hook: stop moving, cancel timers — later tasks)
+  3. Object.Destroy(gameObject)
+
+Why a method instead of calling Destroy everywhere?
+- One consistent place → easy to change later (POOLING! object pools reuse objects
+  instead of destroying them — a common optimization; if every caller did
+  Destroy(go) you'd have to hunt them all down).
+- Subclasses can override and call base.Despawn() to add their own cleanup — the
+  TEMPLATE METHOD PATTERN: base class fixes the SEQUENCE, subclasses fill the STEPS.
+
+## 9. The "template method" pattern — the shape of our collision design
+
+```
+SpaceObject.OnTriggerEnter2D (private, Unity calls this)
+   → resolves `other` as SpaceObject
+   → common guard (IsActive checks)          ← common part, once
+   → OnCollision(other)                       ← virtual, per-class part
+        PlayerController.OnCollision  → "I'm hit / I collect"
+        Enemy.OnCollision             → "I hit the player / I take damage"
+        Obstacle.OnCollision          → "mostly nothing"
+        Collectable.OnCollision       → "player collects me"
+```
+
+This answers the task's core question: YES, keeping OnTriggerEnter2D in the base
+class PAYS OFF — because it contains the COMMON logic (adapter + guard) exactly once,
+and delegates only the DIFFERING decision to override. If there were nothing common,
+the honest design would be: no base method at all — each class implements the Unity
+message itself.
+
+## 10. Why "react to the other, act on yourself" (separation in action)
+
+When a bullet hits an enemy, the BULLET does NOT call enemy.Explode(). Instead:
+- bullet's own logic: "I'm spent" → Despawn() (later task)
+- enemy's own logic: "I was hit" → TakeDamage(n) → maybe Despawn()
+
+Each object only mutates ITS OWN state. This keeps §2.7 (separation) airtight: no
+class reaches into another's internals, no functionality "leaks" (§2.1), and the
+colliding pair is SYMMETRIC — whichever side Unity calls the message on, the outcome
+is the same. It also makes the boss trivially consistent later: BossEnemy just
+overrides TakeDamage/OnCollision — everything else keeps working.
+
+## 11. Quick self-test (answer before checking code-changes-and-why.txt)
+
+1. Why can't Obstacle just inherit TakeDamage from SpaceObject even if the base
+   class provided it?
+   *(Answer: task rule — don't put in base what not all subclasses need; it would
+   force a no-op method on 2 of 4 classes.)*
+2. Why is OnCollision protected and not public?
+   *(It's an extension point for subclasses, not a service for the game code.)*
+3. What breaks if we make SpaceObject a plain C# class instead of MonoBehaviour?
+   *(Unity messages — OnTriggerEnter2D — only reach MonoBehaviours.)*
+4. Why can the active-guard live in the base class but "movement" cannot?
+   *(Guard is identical for all → common; movement differs in both fact and
+   implementation → belongs to each subclass.)*

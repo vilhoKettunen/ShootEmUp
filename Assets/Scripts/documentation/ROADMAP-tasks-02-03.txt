@@ -1,0 +1,101 @@
+﻿# Shoot 'em Up — Task Roadmap (after Task 1)
+
+> Sequencing and dependency map for the remaining course tasks. This is the
+> "which task when" view. Each task folder under Assets/Scripts/documentation/
+> holds the three mandatory docs (dev-actions, code-changes-and-why,
+> learned-lessons-and-concepts).
+
+## Dependency graph (what must exist before what)
+
+```
+Task 1  SpaceObject (base) + Player/Enemy/Obstacle/Collectable
+        |   (abstract base, collision plumbing, IDamageable)
+        v
+Task 2  Movement: MovementPatterns (pure C#) + SOMovementParameters (SO)
+        |          + Bullet : SpaceObject  +  test enemies (GreenSlime/PinkBall)
+        v
+Task 3  Weapons: SOWeaponSpecs (SO) + Weapon (plain C#) + Bullet collision
+        |         + PlayerController wiring (currentWeapon = new Weapon(spec))
+        v
+Task 4+ (later, per course plan)
+        InputController, wave/spawn system, UI weapon HUD, power-up drops,
+        boss, bombs, scoring, pooling.
+```
+
+## Why this order
+
+- Task 1 gives the TYPE HIERARCHY (SpaceObject + derived). Nothing in Tasks 2–3
+  can be written cleanly without it: Bullet : SpaceObject, Enemy subclasses,
+  IDamageable for collision handling.
+- Task 2 gives the MOVEMENT system (pure C# + data asset). Bullet NEEDS it
+  (task text: "Bullet needs to use MovementPatterns with its SOMovementParameters").
+  Enemies test it (GreenSlime/PinkBall). So movement must exist before bullet
+  collision/weapon logic, or Bullet would be a hollow shell.
+- Task 3 gives the WEAPON system (data + state). It depends on Bullet existing
+  (SOWeaponSpecs references a Bullet prefab) and on Bullet having collision
+  (so "shooting enemies" is demonstrable). PlayerController wiring depends on
+  Weapon + SOWeaponSpecs existing.
+
+## File map (where each new class lives)
+
+```
+Assets/Scripts/
+├── GameObjects/                  (NEW — runtime game objects, : SpaceObject)
+│   ├── SpaceObject.cs            (Task 1)
+│   ├── PlayerController.cs       (Task 1 — MODIFIED, stays at root per §2.1)
+│   ├── Enemy.cs                  (Task 1)
+│   ├── Obstacle.cs               (Task 1)
+│   ├── Collectable.cs            (Task 1)
+│   ├── Bullet.cs                 (Task 2)
+│   ├── EnemyGreenSlime.cs        (Task 2 — test enemy)
+│   └── EnemyPinkBall.cs          (Task 2 — test enemy)
+├── ScriptableObjects/            (NEW — data assets, : ScriptableObject)
+│   ├── SOMovementParameters.cs   (Task 2)
+│   └── SOWeaponSpecs.cs          (Task 3)
+├── Logic/                        (NEW — pure C#, NO MonoBehaviour, §2.4)
+│   ├── MovementPatterns.cs       (Task 2)
+│   └── Weapon.cs                 (Task 3)
+├── PlayerController.cs           (MODIFIED in place — §2.1, name & file kept)
+├── ApplicationController.cs    (MODIFIED in place — demo spawn/test harness)
+├── Helper/EassingFunctions.cs    (EXISTING — Kryzarel easing, REUSED not replaced)
+└── documentation/
+    ├── task-01-spaceobject/      (DONE — design stage)
+    ├── task-02-movement-bullet/  (THIS PLAN — movement + bullet)
+    ├── task-03-weapons/          (THIS PLAN — weapon system + collision)
+    └── ROADMAP-tasks-02-03.txt   (this file)
+```
+
+## Cross-task open questions (answer before implementing)
+
+The per-task question lists live in each folder's dev-actions.txt. The ones that
+span BOTH tasks (answer once, applies to both):
+
+- **Q-T2-3 / Q-T3-2** — Bullet collision: does Bullet carry a `Damage` int that it
+  reads via `GetComponent<SpaceObject>()` in OnTriggerEnter2D, or is damage always
+  passed to the bullet at spawn (Init/Spawn)? (Affects Bullet + Enemy + Player.)
+- **Q-T3-1** — Weapon level → damage: does SOWeaponSpecs hold a per-level damage
+  array, or a single base damage the Weapon multiplies? (Affects SOWeaponSpecs.)
+- **Q-T2-1 / Q-T3-3** — Easing: reuse the template's `EasingFunctions`
+  (Assets/Scripts/Helper/) or add a new file? (Affects MovementPatterns.)
+
+## What is DELIBERATELY NOT in Tasks 2–3 (do not build these now)
+
+- No spawn/despawn/pooling system (no object pool, no `Instantiate` in a spawner).
+- No wave manager, no boss, no enemy AI beyond movement.
+- No UI updates for weapon/level (HUD is a later task).
+- No audio wiring beyond what the template already has.
+- No input handling (InputController is a later course deliverable per teacher).
+- No collision resolution beyond the basic "bullet hits enemy/player" trigger.
+- No scene-specific content (rule §2.5 — game must boot from any scene).
+
+## Definition of done (per task)
+
+- **Task 2 done when:** `MovementPatterns` compiles as pure C# (no UnityEngine
+  `using` except `Vector2`/`Vector3` value types — those are allowed as they are
+  plain structs, not MonoBehaviour), `SOMovementParameters` is a ScriptableObject,
+  `Bullet : SpaceObject` moves per its SO, and GreenSlime + PinkBall each use a
+  DIFFERENT pattern (e.g. Sine vs Target) and are visually distinct in Play Mode.
+- **Task 3 done when:** `SOWeaponSpecs` + `Weapon` exist, PlayerController holds a
+  `Weapon` and fires a Bullet on input, bullet collision damages the enemy/player,
+  and at least 2 different weapon SO assets (with different bullet prefabs / fire
+  intervals / damage) are demonstrably switchable at runtime.

@@ -1,0 +1,298 @@
+﻿# IMPLEMENTATION REPORT — Tasks 1, 2 & 3 (all answered questions applied)
+
+> STATUS: CODE DONE (build = zero errors / zero warnings).
+> REMAINING: the Unity Editor steps in section 4 (assets + prefabs + wiring) and
+> the Play-Mode test checklist in section 5.
+>
+> This document finalizes the "design stage" status of the three task folders.
+> It is written so a new AI instance (or a human) can finish the Unity side and
+> verify the whole chain WITHOUT re-deriving any decision.
+
+## 1. What was implemented (file map)
+
+### NEW scripts (all registered in Assembly-CSharp.csproj)
+```
+Assets/Scripts/
+├── GameObjects/
+│   ├── SpaceObject.cs          Task 1 — abstract base: IsActive/Activate/Deactivate,
+│   │                           Despawn ritual, OnTriggerEnter2D adapter +
+│   │                           "both must be active" guard + virtual OnCollision
+│   ├── IDamageable.cs          Task 1 — capability interface (TakeDamage(int));
+│   │                           types-not-tags (rule 2.3)
+│   ├── Enemy.cs                Task 1 — health + virtual TakeDamage + virtual
+│   │                           Move/GetAimDirection/Fire hooks (boss-ready)
+│   ├── Obstacle.cs             Task 1 — NOT IDamageable (indestructible by design)
+│   ├── Collectable.cs          Task 1 — ABSTRACT (teacher Q1: power-ups),
+│   │                           Collect() ritual + player hook
+│   ├── Bullet.cs               Task 2+3 — movement via injected SO, Damage int,
+│   │                           Init(params, damage), collision: damage other if
+│   │                           IDamageable + Despawn self (Q-T3-2/Q-T3-3),
+│   │                           lifespan despawn (Q-T2-3)
+│   ├── EnemyVulture.cs         Task 2 — enemy #1 of the 7-ship roster, SINE movement
+│   ├── EnemyFalcon.cs          Task 2 — enemy #2 of the 7-ship roster, EASED movement
+│   └── TestDummy.cs            Task 3 — Q-T3-4 immortal stationary target,
+│                               HP shown on HUD + console
+├── ScriptableObjects/
+│   ├── SOMovementParameters.cs Task 2 — SO: pattern enum (Straight/Sine/Target/Eased)
+│   │                           + direction/speed/amplitude/frequency/duration/targetOffset
+│   └── SOWeaponSpecs.cs        Task 3 — SO: name, audio, bullet prefab, bullet
+│                               movement SO, spawnOffset, fireInterval, maxLevel,
+│                               baseDamage + damagePerLevel[5] + GetDamageForLevel()
+├── Logic/
+│   ├── MovementPatterns.cs     Task 2 — PURE C# static class (only Vector2 from
+│   │                           UnityEngine): Straight/Sine/MoveToTarget/Eased +
+│   │                           GetPosition dispatcher (always absolute)
+│   └── Weapon.cs               Task 3 — PLAIN C# (no MonoBehaviour): wraps SO +
+│                               level; IncreaseLevel()/ResetLevel(); CurrentDamage
+└── UI/Views/
+    └── UiViewHud.cs            Task 3 — HUD view (template UiView system):
+                                weapon name + level + dummy HP
+```
+
+### MODIFIED scripts (in place, rule 2.1 respected)
+```
+Assets/Scripts/PlayerController.cs     now : SpaceObject, IDamageable
+                                        + weapon state (currentWeapon + GLOBAL level)
+                                        + fire timer (fireRate = player's job)
+                                        + SetWeapon/IncreaseLevel/DecreaseLevel
+                                        + test hooks: [1-5] switch, E up, Q down
+                                        + TakeDamage + Collect(Collectable) +
+                                          OnCollision (enemy/obstacle → damage)
+Assets/Scripts/ApplicationController.cs + enableTestSpawns bool (Q-T2-6, Inspector)
+                                        + test spawn of Vulture, Falcon, bullet, TestDummy
+                                        + optional debug Text hook
+```
+
+### REUSED (not created, per Q-T2-1)
+```
+Assets/Scripts/Helper/EassingFunctions.cs   Kryzarel easing set (namespace
+                                            Kryz.Tweening) — now CONSUMED by the
+                                            MovementPatterns.Eased pattern
+```
+
+### DELETED (renamed per Q-T2-7 space theme)
+```
+GameObjects/EnemyGreenSlime.cs   →  replaced by EnemyVulture.cs
+GameObjects/EnemyPinkBall.cs     →  replaced by EnemyFalcon.cs
+```
+
+## 2. Key decisions (teacher's answers → code)
+
+| # | Decision (from your answers) | Where it lives |
+|---|---|---|
+| 1 | Reuse template easing; use it for movement patterns | MovementPatterns.Eased calls Kryz.Tweening.EasingFunctions.OutCubic |
+| 2 | Movement SO injected at spawn time (not serialized per prefab) | Bullet.Init(so, dmg), EnemyVulture.Init(so), EnemyFalcon.Init(so) |
+| 3 | duration 0 = forever; else despawn | Bullet.Update (lifespan check) |
+| 4 | GetPosition dispatcher allowed | MovementPatterns.GetPosition — objects call ONE line |
+| 5 | MathF/Math, zero UnityEngine dependency | MovementPatterns.cs (Vector2 only) |
+| 6 | Test spawn in ApplicationController + Inspector bool | enableTestSpawns + SpawnTestObjects() |
+| 7 | Space-themed enemies from kenney Ships folder | EnemyVulture, EnemyFalcon (+ 5 more slots, see §4.3) |
+| 8 | 5 weapons, damagePerLevel tables, ~same DPS, different feel | §3 weapon table |
+| 9 | Bullet carries Damage; on hit → TakeDamage(other) + Despawn self | Bullet.OnCollision |
+| 10 | Bullet despawns on ANY SpaceObject hit + lifespan | Bullet.OnCollision + Bullet.Update |
+| 11 | LEVEL IS GLOBAL across weapons; weapons switch/level via powerups later | PlayerController.currentLevel (kept across SetWeapon) |
+| 12 | Test: [1-5] switch, E up, Q down, immortal dummy w/ HP in UI | PlayerController.HandleTestHooks, TestDummy, UiViewHud |
+
+### Design rules applied (AGENTS.md §2.1–§2.8)
+- **2.1** PlayerController/ApplicationController modified in place — never renamed.
+- **2.2** Each runtime object carries EXACTLY ONE custom script (Bullet /
+  EnemyVulture / EnemyFalcon / TestDummy / PlayerController). No helper components.
+- **2.3** No tags anywhere — all distinctions are C# types + IDamageable interface.
+- **2.4** MovementPatterns + Weapon are plain C# (no MonoBehaviour); SOs are data.
+- **2.5** No scene lookups — everything boots from the Main scene via
+  ApplicationController.
+- **2.6** spawnOrigin cached at Init; no per-frame Find/GetComponent.
+- **2.7** Math in MovementPatterns, data in SOs, execution in each object's Update.
+- **2.8** ALL per-variant tuning (enemy moves, weapon tables, bullet motion) lives
+  in ScriptableObject assets, not code branches.
+
+## 3. The 5 weapons (defaults set per Q-T3-1 / Q-T3-6)
+
+DPS target ≈ 100 (damage × shots/second). Feel differs through fire interval,
+bullet speed AND bullet movement pattern (the easing/pattern set in use).
+
+| # | Weapon | fireInt | shots/s | dmg L1..L5 | DPS L1→L5 | bullet movement |
+|---|--------|---------|---------|------------|-----------|-----------------|
+| 1 | MachineGun | 0.15 | 6.7 | 15 14 13 12 10 | 100→67 | Straight up, speed 14 |
+| 2 | LaserCannon | 0.35 | 2.9 | 35 30 25 21 17 | 100→50 | Straight up, speed 9 |
+| 3 | SpreadGun | 0.45 | 2.2 | 45 40 35 29 25 | 100→56 | Sine up, speed 9, amp 1.2, freq 0.7 |
+| 4 | PlasmaBlaster | 0.60 | 1.7 | 60 55 50 44 38 | 100→63 | Sine up, speed 7, amp 2.2, freq 0.5 |
+| 5 | OrbitalCannon | 0.80 | 1.25 | 80 75 70 64 56 | 100→70 | Eased to (0,+9), speed 9 |
+
+Notes:
+- Multi-bullet spread (SpreadGun literally firing 3 bullets) is a LATER task —
+  today it is one bullet with a SINE path; the data shape already supports it.
+- OrbitalCannon demonstrates the Eased pattern: the bullet coasts on an easing
+  curve — visibly different from Straight.
+- Default weapon (player starts with): **MachineGun**.
+
+## 4. WHAT YOU DO IN THE UNITY EDITOR (in order)
+
+> Every step below is required for the Play-Mode tests. If a step is skipped,
+> the matching test in §5 will fail (and the console will tell you which).
+> All paths are relative to the project root.
+
+### 4.1 Create the movement ScriptableObject assets
+Right-click in the Project window → Create → Game → Movement Parameters:
+
+| Asset path (under Assets/ScriptableObjects/) | pattern | dir | speed | amp | freq | dur | targetOffset |
+|---|---|---|---|---|---|---|---|
+| EnemyMovement/VultureMovement | Sine | (0,-1) | 3 | 1.5 | 1 | 0 | — |
+| EnemyMovement/FalconMovement | Eased | — | 9 | — | — | 0 | (0,-6) |
+| Bullets/TestBulletMovement | Straight | (0,1) | 10 | — | — | 2 | — |
+| Bullets/PlayerBullet_MG | Straight | (0,1) | 14 | — | — | 1.5 | — |
+| Bullets/PlayerBullet_Laser | Straight | (0,1) | 9 | — | — | 2 | — |
+| Bullets/PlayerBullet_Spread | Sine | (0,1) | 9 | 1.2 | 0.7 | 2 | — |
+| Bullets/PlayerBullet_Plasma | Sine | (0,1) | 7 | 2.2 | 0.5 | 2.5 | — |
+| Bullets/PlayerBullet_Orbital | Eased | — | 9 | — | — | 3 | (0,9) |
+
+### 4.2 Create the 5 bullet prefabs (in Assets/Prefabs/Bullets/)
+For EACH weapon (repeat the same recipe 5×):
+1. Create empty GameObject → name PlayerBullet_MG (… _Laser, _Spread,
+   _Plasma, _Orbital).
+2. Add Sprite Renderer → sprite: any small ship/rocket from
+   Assets/models/kenney_spaceShooterExtension/PNG/Sprites X2/ (Rockets work well).
+3. Add Box Collider 2D → size ~ (0.3, 0.6) → **Is Trigger: ON**.
+4. Add Rigidbody 2D → Type: Dynamic → **Gravity Scale: 0** (motion is
+   transform-driven; this guarantees trigger callbacks).
+5. Add the **Bullet** script. (NO movement SO field on the script — it is
+   INJECTED at spawn; do NOT look for one.)
+6. Save as prefab (drag to scene or Ctrl+S in prefab stage).
+
+### 4.3 Create the 2 enemy prefabs (+ later 5 more) — in Assets/Prefabs/Enemies/
+- **EnemyVulture**: empty GO → Sprite (e.g. Ships/spaceShips_002.png) →
+  Circle Collider 2D (Is Trigger ON) → Rigidbody 2D (Dynamic, Gravity 0) →
+  **EnemyVulture** script → save.
+- **EnemyFalcon**: same recipe, sprite spaceShips_004.png, script **EnemyFalcon**.
+- (Roster slots for later: EnemyWasp, EnemyHornet, EnemyRaptor, EnemyCondor,
+  EnemyStinger — same recipe, different sprite; the 4 Rockets sprites are
+  reserved for the BOSS later.)
+
+### 4.4 Create the TestDummy prefab
+Assets/Prefabs/Enemies/TestDummy.prefab: empty GO → Sprite (use
+Rockets/rocket_01.png or any ship) → Box Collider 2D (Is Trigger ON) →
+Rigidbody 2D (Dynamic, Gravity 0) → **TestDummy** script → save.
+(No movement SO needed — the dummy is stationary by design.)
+
+### 4.5 Create the 5 weapon ScriptableObject assets
+Right-click → Create → Game → Weapon Specs in Assets/ScriptableObjects/Weapons/.
+Fill per the table in §3. Field-by-field (MachineGun example):
+- weaponName: MachineGun
+- shootAudioClip: Assets/SoundEffects/Laser_Shoot_1.wav
+- bulletPrefab: PlayerBullet_MG (the PREFAB from §4.2)
+- bulletMovement: PlayerBullet_MG (the SO from §4.1)
+- spawnOffset: (0, 0.8)
+- fireInterval: 0.15 / maxLevel: 5
+- baseDamage: 15 / damagePerLevel: [15, 14, 13, 12, 10]
+- Repeat for the other 4 with their values (§3).
+
+### 4.6 Create the HUD view + register it in the UI prefab
+1. Create empty GameObject → name UIView_HUD → add Canvas + Canvas Scaler
+   (reference resolution 1920×1080) + Graphic Raycaster.
+2. Under it create 3 Text (Legacy) children:
+   - Text_Weapon   (top-left)       initial: "Weapon: MachineGun"
+   - Text_Level    (top-left, below) initial: "Level: 1"
+   - Text_Health   (top-right)      initial: "Dummy HP: 100"
+3. Add **UiViewHud** script to UIView_HUD → set **DefaultState = Visible** →
+   assign the 3 texts to weaponText / levelText / healthText.
+4. Save UIView_HUD as a prefab (any folder, e.g. Assets/Prefabs/UI/).
+5. Open Assets/Prefabs/Resources/UI.prefab → find the **UiViewsList** component
+   (same object as UIController) → add ONE item to Views:
+   - UiLayer: LayerHUD
+   - View: UIView_HUD prefab
+6. Save UI.prefab. (The HUD now auto-appears in every scene that has the UI.)
+
+### 4.7 Assign the PLAYER weapon (PlayersShip prefab)
+Open Assets/Prefabs/Resources/PlayersShip.prefab:
+- PlayerController → **Default Weapon**: MachineGun
+- PlayerController → **Weapon Specs** (size 5), in this exact order (test keys):
+  1. MachineGun   2. LaserCannon   3. SpreadGun   4. PlasmaBlaster   5. OrbitalCannon
+- (Recommended) Add Box Collider 2D (Is Trigger ON) + Rigidbody 2D (Dynamic,
+  Gravity 0) to the player GO so enemy/obstacle contact damage works.
+- Save.
+
+### 4.8 Wire the ApplicationController (test-spawn assets)
+The ApplicationController is auto-created at runtime (singleton). To assign
+Inspector values, in the Main scene:
+1. Create empty GO → name ApplicationController → add the script.
+2. Enable **Enable Test Spawns** (default true).
+3. Assign:
+   - vultureMovement = VultureMovement SO,   vulturePrefab = EnemyVulture
+   - falconMovement = FalconMovement SO,     falconPrefab = EnemyFalcon
+   - testBulletMovement = TestBulletMovement SO, testBulletPrefab = PlayerBullet_MG
+   - testDummyPrefab = TestDummy
+   - (optional) debugText = any Text in scene
+4. Save the Main scene. (Alternatively uncheck enableTestSpawns for clean play.)
+
+### 4.9 Sanity checks (30 seconds)
+- Project window: no yellow/missing-script icons anywhere.
+- Project Settings → Tags and Layers: no custom tags used (rule 2.3).
+- Each prefab (open each one): EXACTLY ONE custom script (rule 2.2).
+
+## 5. HOW TO TEST (Play Mode, from the Main scene)
+
+### T1 — Movement (Task 2)
+1. Press Play. Console should show the `[Test] Spawned ...` lines.
+2. **Vulture** (left, x=-2): moves DOWN while WIGGLING side-to-side (sine).
+3. **Falcon** (right, x=2): moves DOWN on a smooth EASED curve (OutCubic).
+4. **Test bullet** (bottom center): flies STRAIGHT UP, disappears after ~2 s
+   (duration) even without hitting anything.
+5. Watch ≥ 10 s: no per-frame warnings in the Console.
+PASS = all four move as described + clean console.
+
+### T2 — Firing + weapon feel (Task 3)
+1. Hold fire (Space / Jump action): MachineGun bullets stream up, fast (0.15 s).
+2. Press **2** (LaserCannon): slower stream, slower bullets.
+3. Press **3** (SpreadGun): bullets wiggle (sine path) while rising.
+4. Press **4** (PlasmaBlaster): wider, slower wiggle.
+5. Press **5** (OrbitalCannon): single eased bullet every 0.8 s.
+6. HUD (top-left) shows the weapon name + level changing with each press.
+PASS = 5 visually distinct fire patterns + HUD updates.
+
+### T3 — Damage + level (Q-T3-1/Q-T3-4)
+1. Level 1 MachineGun: shoot the **TestDummy** (center). Console:
+   `[TestDummy] Took 15 damage → HP: 85` (100 → 85).
+2. Press **E** ×4 → Level 5. HUD shows "Level: 5".
+3. Shoot dummy again: `Took 10 damage` (L5 MachineGun dmg = 10).
+4. Press **Q** → Level 4 (dmg 12). Switch to **2** (LaserCannon) — level is
+   KEPT (global): shoot → `Took 21 damage` (L4 LaserCannon).
+5. Keep shooting the dummy to 0: `HP: 0` — **it does NOT die** (immortal).
+PASS = numbers match §3 tables, level persists across switches, dummy survives.
+
+### T4 — Enemy death + collision
+1. With a high level, focus fire on the **Vulture** (HP 10, dies in 1 shot).
+   It disappears (Despawn) — console clean, no "missing reference" errors.
+2. Same for the **Falcon**.
+3. Fly the player INTO an enemy: console prints
+   `[Player] Took 1 damage.` — player stays alive (lives = later task).
+PASS = enemies die at 0 HP, player reports hits, no null-reference spam.
+
+### T5 — Rules checklist (once, after the above)
+- [ ] Console has ZERO errors over a 30 s Play session.
+- [ ] No tags used (Project Settings → Tags and Layers).
+- [ ] One custom script per prefab (open each prefab).
+- [ ] enableTestSpawns OFF + Play = only the player exists, zero errors
+      (rule 2.5 — boots from a scene with no test objects).
+
+## 6. Known limitations / explicitly NOT built (per scope)
+- Enemy FIRING: Enemy.Fire() hook exists, not wired (later task).
+- Enemy contact damage value is a placeholder 1 (per-enemy data = later).
+- Player lives/death: TakeDamage logs only (later task).
+- Multi-bullet spread (SpreadGun firing 3 bullets): later task.
+- Object pooling, waves, boss, power-up pickups, score: later tasks.
+- Template issues (input + audio inside PlayerController): FLAGGED, not fixed
+  (teacher Q4: leave for the InputController refactor).
+- Collectable is abstract — no concrete power-up class yet (by design, Q1).
+
+## 7. Troubleshooting
+| Symptom | Cause / fix |
+|---|---|
+| "No defaultWeapon assigned" warning | §4.7 not done — assign MachineGun on PlayersShip |
+| Player doesn't fire | Default Weapon empty — see §4.7 |
+| Enemy doesn't move | SO asset not assigned on ApplicationController (§4.8) |
+| Bullet flies but never despawns | Duration = 0 on its SO → set to 1.5–3 s |
+| Bullets/enemies fall down | Rigidbody 2D Gravity Scale ≠ 0 (see §4.2–4.4) |
+| No collision at all | Collider missing "Is Trigger: ON" or Rigidbody 2D missing |
+| HUD not visible | UiViewsList item missing in UI.prefab (§4.6 step 5) |
+| Dummy HP text not updating | HUD text fields unassigned (§4.6 step 3); console still shows HP |
+| Pressing 1–5 does nothing | weaponSpecs list shorter than the key index (§4.7 order) |

@@ -1,0 +1,288 @@
+﻿# Task 3 — Weapon System & Bullet Collision · Learned Lessons & Concepts
+
+> The "how does it actually work" view. Concepts used by the Task 3 design,
+> explained the way they matter for THIS course (rules §2.1–§2.8).
+
+## 1. The three-layer weapon architecture — DATA / STATE / ACTOR
+
+This is the single most important concept of the task. A "weapon" is actually
+THREE different things that must not be mixed:
+
+```
+LAYER 1 — DATA (SOWeaponSpecs, ScriptableObject asset)
+  "What IS a machine gun?"  → name, projectile, damage table, fire rate.
+  Immutable at runtime. Lives in the project as a .asset file.
+  One per weapon type. Created in the Editor, NEVER in code.
+
+LAYER 2 — STATE (Weapon, plain C# POCO)
+  "What state is MY weapon in RIGHT NOW?" → which spec + level 3.
+  Mutable at runtime. Lives in memory only. One per active weapon slot.
+
+LAYER 3 — ACTOR (Bullet : SpaceObject, MonoBehaviour)
+  "A specific projectile flying through the world THIS FRAME."
+  Ephemeral. Spawned by the state layer, dies on hit. One per shot fired.
+```
+
+Why three layers instead of one "Weapon" class that does everything?
+
+- If DATA were in the POCO (e.g. `weapon.damage = 12` hardcoded), you could not
+  tune it in the Inspector, and a 4th weapon would need a new class (§2.8 +
+  extensibility — both broken).
+- If STATE were in the SO asset (e.g. `weapon.level = 3` serialized), two players
+  sharing one asset would share a level (impossible — SO assets are shared
+  FILES). State must be per-instance in memory.
+- If ACTOR were in the POCO (e.g. Weapon IS the bullet), you could only have
+  ONE bullet in the world at a time. The bullet must be a separate, spawnable
+  object.
+
+**The course's "helposti laajennettavissa" (easily extendable) goal is achieved
+by this split:** add weapon #4 = create one SO asset (+ maybe one bullet
+prefab). Zero C# changes. Change level-3 damage = edit one number in the
+Inspector. Kill a bullet faster = edit the bullet prefab's collider. Each
+concern is tunable in the place it BELONGS.
+
+## 2. Why `Weapon` is a POCO and NOT a MonoBehaviour (rule §2.4 in the wild)
+
+`Weapon` has: a constructor, a field, a property, two methods. It has NO
+Awake/Start/Update, NO references to Transform, NO coroutines, NO Unity
+services. It is pure logic + state.
+
+A MonoBehaviour is a Unity COMPONENT — it must be ATTACHED to a GameObject to
+exist. `Weapon` is not attached anywhere; it is `new`-ed by the player:
+`currentWeapon = new Weapon(defaultWeapon);`. If Weapon were a MonoBehaviour,
+this line would be illegal (you cannot `new` a MonoBehaviour — Unity manages
+their lifecycle). Making it a MonoBehaviour would also drag UnityEngine into a
+class that has no business touching it (§2.4).
+
+**Decision rule (memorize this):**
+- Needs to LIVE in the scene (Update, collisions, render, physics) → MonoBehaviour.
+- Needs to be a FILE the designer edits (tuning data) → ScriptableObject.
+- Neither — pure logic/state → plain C# class.
+In this task: Bullet = first, SOWeaponSpecs = second, Weapon = third.
+
+## 3. MonoBehaviour constructors don't exist — that's why `Init(int)` exists
+
+Unity creates MonoBehaviours by itself (scene load / Instantiate). It CANNOT
+pass arguments to a constructor, so the standard pattern for "constructor with
+parameters" on a component is:
+
+```csharp
+Bullet b = Instantiate<Bullet>(prefab);   // Unity constructs it, no args
+b.Init(currentWeapon.CurrentDamage);      // YOU set the per-instance state
+```
+
+`Init` is just a constructor-shaped method called right after `Instantiate`.
+This is exactly the brief's "Init/Spawn -metodin kautta" line. If you see
+`new Bullet(...)` anywhere in this project, it is WRONG — that line would not
+compile (Bullet is a MonoBehaviour).
+
+The same pattern is how the player gets its weapon: `Start()` runs after all
+Awake calls, so the player constructs its `Weapon` POCO there — a moment where
+everything it needs (its serialized `defaultWeapon`) is already available.
+
+## 4. "React to the other, act on yourself" — the collision etiquette (recap + extension)
+
+Task 1 established the rule; Task 3 is where it actually runs. When a bullet
+overlaps an enemy, TWO things happen, and the ORDER + OWNERSHIP matter:
+
+```
+Unity calls OnTriggerEnter2D on BOTH objects (bullet AND enemy).
+
+BULLET side (Bullet.OnCollision via SpaceObject adapter):
+  "I hit something damageable" → I deal MY damage to IT  (d.TakeDamage(Damage))
+  "I am spent"                 → I Despawn() MYSELF
+ENEMY side (Enemy.OnCollision via SpaceObject adapter):
+  "I was hit by a bullet"      → (Task 1: bullet branch) → I TakeDamage MYSELF
+```
+
+Notice the SYMMETRY: each object only ever writes ITS OWN state (bullet removes
+itself, enemy reduces its own health). Nobody calls `enemy.Explode()` or
+`bullet.Vanish()` from the other side. Why does this matter?
+
+1. **It is order-independent.** Unity calls the two messages in some order we
+   don't control; since neither side depends on the other's internal state
+   mid-call, the outcome is identical whichever runs first.
+2. **It composes with future types.** A future destructible obstacle implements
+   IDamageable and INSTANTLY gets hit by bullets — Bullet's code never changes.
+3. **It keeps §2.7 airtight.** Bullet knows nothing about Enemy's internals;
+   it only uses the PUBLIC IDamageable contract.
+
+The ONE exception to "act on yourself" is the damage DEALING line — the bullet
+MUST call the other's public TakeDamage (that IS dealing damage; there is no
+other way). But it goes through the TYPE-SAFE PUBLIC API, not into internals.
+
+## 5. `is IDamageable` vs. `is Enemy` — why the interface check is the better type check
+
+Both are §2.3-compliant ("types, not tags") — but they scale differently:
+
+```csharp
+if (other is Enemy e)        e.TakeDamage(Damage);   // works for Enemy + BossEnemy
+if (other is IDamageable d)  d.TakeDamage(Damage);   // works for ANY future damageable
+```
+
+With `is Enemy`, a later "destructible crate" or "weak wall" would need Bullet
+to also check `is Crate` — the bullet would accumulate knowledge of every
+damageable type (bad coupling). With `is IDamageable`, Bullet knows exactly ONE
+thing: "I damage things that can be damaged." The interface is the MINIMUM
+CONTRACT the bullet needs. This is the "program to the interface, not the
+implementation" principle from Task 1 lesson §3, now doing real work.
+
+**Rule of thumb for this course:**
+- Check a CONCRETE type when you need that type's UNIQUE behavior
+  (e.g. `if (other is PlayerController p) p.Collect(...)` — Collect is
+  player-only).
+- Check an INTERFACE when you need a CAPABILITY that several types share
+  (TakeDamage is shared by player + enemies).
+
+## 6. Fire-rate gating — why `fireTimer -= deltaTime` and not "IsPressed" alone
+
+The template's `OnFire(InputAction.CallbackContext)` fires ONCE per key PRESS
+(event-driven). A weapon with a fire RATE fires REPEATEDLY while HELD
+(state-driven). The standard Unity idiom:
+
+```csharp
+fireTimer -= Time.deltaTime;                       // tick down every frame
+if (Attack.IsPressed() && fireTimer <= 0f)         // held AND ready?
+{
+    FireCurrentWeapon();
+    fireTimer = currentWeapon.FireInterval;        // RE-ARM with the spec's rate
+}
+```
+
+Why this shape (and not a coroutine with `WaitForSeconds`)?
+- **It reads the rate from DATA** (`currentWeapon.FireInterval`) at the moment
+  of re-arm — switch weapons and the next shot immediately uses the new rate.
+  A coroutine would have captured the old value.
+- **It is interruptible.** Release the key → the timer keeps ticking; press
+  again later → fires immediately (timer already ≤ 0). No coroutine to
+  Cancel.
+- **One line in Update** — no state machine, no coroutines, no events.
+
+This is the brief's "fireRate jää PlayerControllerin vastuulle" implemented:
+the NUMBER is weapon data (SO → Weapon → FireInterval), the TIMING LOGIC is
+the player's job. Two lines of responsibility, cleanly separated.
+
+## 7. Level scaling — where the "5 eri tasoja" lives
+
+The course demands 5 efficiency levels per weapon. The design isolates the
+level→damage mapping in EXACTLY ONE method:
+
+```
+SOWeaponSpecs.DamageAtLevel(level)   ← the ONLY place "level means damage"
+Weapon.CurrentDamage => definition.DamageAtLevel(level)
+PlayerController:  b.Init(currentWeapon.CurrentDamage)
+```
+
+So the damage of a level-3 MachineGun bullet is: `MachineGunWeaponSpecs.asset →
+damagePerLevel[2] = 12`. That's it — three hops, each in the right layer
+(data asset → state object → runtime hand-off). Change the curve = edit the
+asset. Add a new scaling dimension (speed? count?) = add a new array + a new
+`XAtLevel` method + one line in Init. NOTHING ELSE MOVES. That is the
+"easily extendable / määriteltävissä" requirement, demonstrated on a single
+line of code.
+
+**Why an array and not `baseDamage * level`?** A formula is uniform — every
+weapon would grow at the same relative rate. A table lets the designer say
+"MG is a rapid-fire weapon: damage grows slowly, rate is the star" vs "Energy
+Ring is a heavy weapon: damage grows fast". Per-weapon curves = per-weapon
+arrays. (If the teacher answers Q-T3-1 with the formula option, the design
+still works — `DamageAtLevel` becomes one line of math. The ARCHITECTURE is
+unaffected; only the asset's fields change.)
+
+## 8. `Instantiate<Bullet>(prefab)` — typed instantiation and why it matters
+
+```csharp
+GameObject go = Instantiate(prefab);              // untyped — need a cast
+Bullet b     = Instantiate<Bullet>(prefab);       // typed — compiler checks
+```
+
+The generic form asks Unity: "instantiate this prefab and give me the result
+as a Bullet". If the prefab does NOT have a Bullet component, this COMPILES
+fine but FAILS at runtime with a clear error — the type system is your runtime
+guard. Combined with the SO field being typed `Bullet bulletPrefab`, the whole
+chain is type-safe: the SPEC promises a Bullet, the SPAWN asks for a Bullet,
+the HAND-OFF (`b.Init(...)`) uses a Bullet. No casts, no `GetComponent` needed
+at spawn, no tags (§2.3 satisfied end-to-end).
+
+**Gotcha to remember:** the prefab's ROOT GameObject name can be anything
+("PlayerBullet_MG"), but the component on it MUST be Bullet (or a subclass).
+If you later make `EnemyBullet : Bullet`, the typed Instantiate still works
+(generics accept derived types) — the hierarchy from Task 1 pays off again.
+
+## 9. Prefab variation vs. prefab hierarchy — which to use for two bullets
+
+Two bullets (MG fast/weak, Ling slow/strong) share the SAME SCRIPT (Bullet).
+Two ways to build their prefabs:
+
+- **Prefab variations** (right-click → Create → Prefab Variant): one base
+  "Bullet" prefab, two variants overriding sprite/movement SO. Pros: shared
+  structure; change the script on the base, both update. Cons: an extra
+  indirection layer; variants confuse the "one prefab per object" mental model.
+- **Two independent prefabs** (this design): each prefab is self-contained.
+  Pros: simplest, matches the reference screenshot (separate
+  PlayerBullet_MG / PlayerBullet_Ling files), §2.2 reads cleanly.
+  Cons: a script change means touching both prefabs (rare — the script is
+  stable after this task).
+
+For this course, two independent prefabs is the honest choice — it is what the
+reference layout shows, and it keeps each object's "one script" story obvious
+in the Inspector. Prefab variants become worth it at 5+ bullet types (later).
+
+## 10. What "testing the weapon system" concretely means in Play Mode
+
+The acceptance matrix (code-changes §10) is observable, not abstract. The
+concrete checklist a student can run with NO test framework:
+
+1. **Rate**: hold Attack for 5 seconds. MG (0.2s interval) ≈ 25 bullets;
+   EnergyRing (0.35s) ≈ 14. Count via a console log in FireCurrentWeapon.
+2. **Damage scaling**: log `b.Damage` right after Init. Level 1 → 5 (MG),
+   level 3 → 12, level 5 → 20. Level-up via TestLevelUp() and re-log.
+3. **Switching**: SetWeapon(EnergyRing) → next bullet's prefab is
+   PlayerBullet_Ling (different sprite visible in the scene view) and Damage
+   follows the NEW weapon's table.
+4. **Collision**: spawn an enemy in the bullet's path (Task 2 test-spawn).
+   Bullet disappears on contact (Despawn), enemy's health drops by exactly
+   the bullet's Damage (log both).
+5. **Death**: keep shooting until enemy health ≤ 0 → enemy disappears
+   (Despawn) — the full kill chain works.
+6. **Clean console**: 30 seconds of the above, zero red/yellow lines.
+
+Every number in this list is HAND-COMPUTABLE from the SO assets — which is the
+point of data-driven design: the game's behavior is a readable spec, not a
+mystery inside code.
+
+## 11. Why we did NOT build a "WeaponManager" / "DamageSystem" singleton
+
+Tempting. Wrong for this course. A singleton "manages weapons" by holding them
+in a list and broadcasting events ("WeaponFired", "EnemyDamaged"). That is a
+general-purpose framework — and the course explicitly asks for the OPPOSITE:
+each object owns its own state and reacts to its own events (§2.7, §2.1).
+The player owns its weapon; the bullet owns its damage; the enemy owns its
+health. The "system" EMERGES from the objects talking via public APIs — there
+is no central brain to get the design wrong, and no new class to violate §2.1
+("no unnecessary classes"). When the course LATER adds a score system or wave
+manager, THAT is where ApplicationController (existing controller, §2.1) takes
+over — not a brand-new manager class.
+
+## 12. Quick self-test (answer before checking code-changes-and-why.txt)
+
+1. Why can't `Weapon` be a ScriptableObject instead of a POCO?
+   *(It must be per-PLAYER-INSTANCE mutable state; SO assets are shared files —
+     two ships sharing one asset would share a level. Also SOs have no
+     constructor parameters.)*
+2. Why is `damage` on Bullet set by `Init()` and not by the SOWeaponSpecs
+   directly?
+   *(The bullet is generic — it doesn't know which weapon fired it. The
+     spawner knows both sides (weapon level + bullet) and passes the value —
+     keeping the bullet weapon-agnostic.)*
+3. A bullet hits an Obstacle (not IDamageable). What happens, and why is that
+     CORRECT?
+   *(Bullet.OnCollision: the `is IDamageable` check fails → no damage dealt;
+     Despawn() still runs (Q-T3-3 default) → bullet is spent on the wall.
+     Correct because an indestructible obstacle has nothing to receive.)*
+4. You add a 3rd weapon, "SpreadGun", that fires 3 bullets per shot. How many
+     C# files do you change?
+   *(ZERO. New SO asset + new bullet prefab (or reuse) + SetWeapon call. The
+     per-shot COUNT logic would be a later addition to FireCurrentWeapon or a
+     small virtual on a Weapon subclass — either way, the existing 3 weapons
+     are untouched.)*

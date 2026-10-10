@@ -1,0 +1,239 @@
+﻿# Task 3 — Weapon System (SOWeaponSpecs + Weapon) & Bullet Collision · Dev Actions
+
+> The "what do I do / what's left" checklist. Tick items as they are completed.
+> STATUS: CODE IMPLEMENTED (build clean). Remaining = Unity Editor steps (5 weapon
+> SOs + 5 bullet prefabs + HUD + wiring, see ../IMPLEMENTATION-REPORT-tasks-1-3.txt
+> §4) + Play-Mode tests (§5). NOTE: per Q-T3-6 there are 5 weapon types
+> (MachineGun/LaserCannon/SpreadGun/PlasmaBlaster/OrbitalCannon), not 2.
+
+## Teacher's brief (Finnish, summarized)
+
+- Build a WEAPON system: 3 clearly different weapon types, each with 5 efficiency
+  levels (damage / speed / count scale with level). Design for easy extension.
+- Start with a DATA class: `SOWeaponSpecs` (ScriptableObject) defines the weapon and
+  links its graphical representation + Bullet prefab to a specific weapon.
+- `Weapon` class (used by PlayerController, e.g. `currentWeapon = new Weapon(specs)`)
+  holds the weapon STATE and has methods to upgrade / reset the current weapon system
+  (`IncreaseLevel`, `ResetLevel`).
+- `Bullet` already exists (Task 2) but needs COLLISION DETECTION + HANDLING so the
+  whole chain works and "shooting enemies" is demonstrable.
+- `fireRate` (fire interval) stays the PLAYERS' responsibility per the brief; a
+  single bullet's DAMAGE is passed to the Bullet, e.g. via Init/Spawn, depending on
+  the player's current weapon level.
+- Once SOWeaponSpecs + Weapon exist: create prefabs for at least TWO weapons
+  (MachineGun + EnergyRing, per the reference screenshot), each with its own
+  Bullet prefab + SOMovementParameters, create the SOWeaponSpecs assets, and test
+  actual firing with small changes to PlayerController
+  (`currentWeapon = new Weapon(DefaultWeapon);` where DefaultWeapon is a
+  SOWeaponSpecs reference assigned in the Inspector).
+- Reference layout (screenshot): prefabs PlayerBullet_Ling / PlayerBullet_MG,
+  SO assets EnergyRingWeaponSpecs + MachineGunWeaponSpecs, classes
+  SOWeaponSpecs, Weapon, Bullet, Collectable.
+
+## ✅ Done
+
+- [x] Read the teacher's Task 3 brief + reference diagram (SOWeaponSpecs fields,
+      Weapon API, PlayerController firing code, project tree, asset layout)
+- [x] Confirmed Task 2 design (Bullet : SpaceObject, SOMovementParameters,
+      MovementPatterns) is the foundation — Bullet gains Damage + collision here
+- [x] Audited current PlayerController (input + OnFire + audio) and ApplicationController
+      (Resources-based Instantiate) — the wiring points for this task
+- [x] Verified AudioController API: `PlaySoundEffect(AudioClip, volume, pitch, delay)`
+      exists — the Weapon's ShootAudioClip will feed it
+- [x] Confirmed InputSystem_Actions exposes Player.Attack (used by the reference
+      PlayerController code) — input itself is NOT refactored in this task
+      (InputController is a later course deliverable per teacher)
+- [x] Wrote the three task documents (this folder) + updated the roadmap file
+
+## ⬜ To do — in this order
+
+### A. Decide the design (BEFORE writing code)
+- [ ] **A1.** Review code-changes-and-why.txt §1–§8 and the rule checklist §9
+- [ ] **A2.** Answer Open Questions Q-T3-1 … Q-T3-6 (teacher)
+- [ ] **A3.** Lock the two weapon test configurations (names, bullet prefabs,
+      damage/level tables, fire intervals) — defaults proposed in Q-T3-6
+
+### B. Write the code (order: data asset → state class → bullet damage → wiring)
+- [ ] **B1.** Create `Assets/Scripts/ScriptableObjects/SOWeaponSpecs.cs`
+      (ScriptableObject + [CreateAssetMenu "Game/Weapon Specs"], serialized
+      weaponName / shootAudioClip / bulletPrefab (Bullet) / damage + per-level
+      values per Q-T3-1 / maxLevel, read-only properties — exact shape in
+      code-changes §2)
+- [ ] **B2.** Create `Assets/Scripts/Logic/Weapon.cs` — PLAIN C# (NO MonoBehaviour,
+      §2.4): holds SOWeaponSpecs + level; properties Name/MaxLevel/FireInterval/
+      BulletPrefab/ShootAudioClip/CurrentDamage; methods IncreaseLevel() +
+      ResetLevel(); per-level damage lookup per Q-T3-1
+- [ ] **B3.** EXTEND `Assets/Scripts/GameObjects/Bullet.cs` (from Task 2):
+      add `public int Damage { get; private set; }` + `public void Init(int damage)`
+      + `protected override void OnCollision(SpaceObject other)` (damage the other
+      IF it is IDamageable, then Despawn self). Exact code in code-changes §3
+- [ ] **B4.** EXTEND `Assets/Scripts/PlayerController.cs` (MODIFY in place — §2.1):
+      add `currentWeapon` (Weapon) + [SerializeField] DefaultWeapon (SOWeaponSpecs)
+      + fireTimer + FireAtInterval() + FireCurrentWeapon() + SetWeapon/GetWeapon
+      per the reference diagram. Exact code in code-changes §4
+- [ ] **B5.** (Pending Q-T3-5) Switching test hook: cycle through 2–3 SOWeaponSpecs
+      assets via key or timer — default: a `TestCycleWeapon()` method on
+      PlayerController called from a temporary input hook, REMOVABLE later
+- [ ] **B6.** Build — zero errors/warnings; boot from Main scene (§2.5)
+- [ ] **B7.** Re-run the rule-compliance checklist (code-changes §9)
+- [ ] **B8.** Update AGENTS.md §3 Code Map + Task Progress Log (workflow rule 7)
+
+### C. Unity editor work (after B compiles)
+- [ ] **C1.** Create SO assets (Create → Game → Weapon Specs), suggested names/values
+      (confirm in Q-T3-6):
+        - `Assets/ScriptableObjects/Weapons/MachineGunWeaponSpecs`
+          (damage base 5, per-level [5,8,12,16,20] per Q-T3-1, maxLevel 5,
+          fireInterval 0.2, bullet = PlayerBullet_MG prefab, clip = Laser_Shoot_1)
+        - `Assets/ScriptableObjects/Weapons/EnergyRingWeaponSpecs`
+          (damage base 8, per-level [8,12,18,24,32], maxLevel 5,
+          fireInterval 0.35, bullet = PlayerBullet_Ling prefab, clip = Laser_Shoot_1)
+- [ ] **C2.** Create the two BULLET prefabs in `Assets/Prefabs/`:
+        - `PlayerBullet_MG` — sprite + BoxCollider2D (Is Trigger ON) + Bullet script +
+          its SOMovementParameters (Straight, up, speed 12)
+        - `PlayerBullet_Ling` — sprite + BoxCollider2D (Is Trigger ON) + Bullet script +
+          its SOMovementParameters (Straight, up, speed 8)
+      (both bullets share the Bullet SCRIPT — §2.2 satisfied; variation is DATA)
+- [ ] **C3.** Assign `DefaultWeapon = MachineGunWeaponSpecs` on the PlayersShip prefab
+      (Inspector) so the player can fire immediately in Play Mode
+- [ ] **C4.** Play-Mode test matrix (all must pass — see code-changes §10):
+        - Player fires MachineGun bullets → bullet flies up per its SO (Task 2 works)
+        - Bullet hits EnemyGreenSlime → enemy takes damage (console log shows hit)
+        - Enemy dies at 0 HP → Despawn() called (object disappears)
+        - Switch to EnergyRing (test hook) → bullet prefab CHANGES to PlayerBullet_Ling
+        - IncreaseLevel (test hook) → bullet Damage property INCREASES (console log)
+        - Player hit by enemy → player TakeDamage works (existing Task 1 behavior)
+- [ ] **C5.** Verify no tags used anywhere (Project Settings → Tags and Layers, §2.3)
+
+## 📋 Open Questions (for the teacher — PENDING, fill in your answers)
+
+- **Q-T3-1.** How does WEAPON LEVEL scale DAMAGE? Your reference shows a single
+  `damage` int on SOWeaponSpecs, but the brief says "5 eri tasoja tehokkuutta".
+  Options:
+  (a) SOWeaponSpecs holds `baseDamage` + `int[] damagePerLevel` (length = maxLevel,
+  designer fills the table per weapon) — my DEFAULT, most flexible;
+  (b) SOWeaponSpecs holds `baseDamage` only; Weapon computes `baseDamage * level`
+  (simple, but all weapons share the same growth curve — less "clearly different");
+  (c) SOWeaponSpecs holds a single `damage` and a `damageGrowthMultiplier` float.
+  (Same question applies to FIRE RATE per level — does fireInterval scale with
+  level, or stay fixed per weapon? My default: FIXED per weapon for now, scaling
+  is a later task; the brief says fireRate is the player's responsibility.)
+  ANSWER: ______________________________
+
+  A) SOWeaponSpecs holds `baseDamage` + `int[] damagePerLevel` (length = maxLevel,
+  but i want you to set defould numbers for all levels for all weapon types 
+  so that they all scale att rougly the same DPS (damage per secund) so if one weapon has 2x firerate then it has 0.5x damage per 
+  bullet , if one weapon has 0.5x firerate then it has 2x damage per bullet, etc) and there should be some diffrences in how the 
+  weapons act in eather fireate or bullet movement using the SOMovementParameters so that they feel different to the player when they are
+  using them
+
+- **Q-T3-2.** Bullet collision: when a Bullet overlaps an Enemy/Player, does the
+  BULLET call `other.TakeDamage(bullet.Damage)` (bullet carries its own Damage int,
+  set at spawn), or does the ENEMY/PLAYER query the bullet for damage? My default:
+  BULLET carries `Damage` + the bullet's own `OnCollision` override does
+  `if (other is IDamageable d) d.TakeDamage(Damage);` then `Despawn()`. This is the
+  "react to the other, act on yourself" pattern from Task 1. Confirm?
+  ANSWER: ______________________________ä
+
+  yes exsactley so wen a bullet hits a damageable object it will call the TakeDamage method on that object and then despawn itself
+
+- **Q-T3-3.** Should Bullet ALSO despawn when it hits a non-damageable object
+  (Obstacle, Collectable), or only when it hits an IDamageable target? My default:
+  despawn on ANY SpaceObject overlap (a bullet that hits a wall is spent). Confirm?
+  ANSWER: ______________________________
+
+  yes it should despawn on any spaceobject overlap so that the bullet does not keep flying around the scene after hitting a wall or something else
+  also bullets have a lifespan time so they will aventually depsawn reguardless of if they hit something or not
+
+
+- **Q-T3-4.** Where does the WEAPON STATE (level) live when the player SWITCHES
+  weapons? Brief says "collecting a different type switches weapons but KEEPS the
+  current level" (course spec). My default: `PlayerController` holds a
+  `currentLevel` int (independent of Weapon) + a `currentWeapon` Weapon instance;
+  when switching, the new Weapon is created with the SAME level. So Weapon.level
+  is per-weapon-instance, but the PLAYER's level is persistent. Is this right, or
+  should the level be GLOBAL (one level for all weapons)?
+  ANSWER: ______________________________
+
+  the level should be global so that the player can switch between weapons and keep the same level for all weapons so that they can use any weapon they want without having to worry about leveling up each weapon individually
+  but weapons only change wen picking up powerups and therefor only changes weapons wen the player gets a new level
+  so wen a player picks up a different weapon type powerup they swich wapon types but wen the same type then it levels up
+  and levels are saved so wen swiching it maintains the level the players att
+
+  wen in test mode i should be able to swich between weapons with my numbers and level up with "e" and down with "q" also make a stationary 
+  enemy spawn thats imortal but takes damage and shows in UI how much damage its taking as a test dummy
+
+- **Q-T3-5.** TEST HOOK for switching/leveling during Play Mode (before the
+  Collectable/power-up system exists):
+  (a) a temporary key input on PlayerController (e.g. K = switch weapon,
+  L = level up, M = level reset) — my DEFAULT, easiest to test, removable later;
+  (b) a timer that auto-cycles weapons every 5s (no input needed, but harder to
+  observe);
+  (c) console commands (requires a CommandLine helper — more code).
+  ANSWER: ______________________________
+
+  i allredy answered this in the earlyer question
+
+
+- **Q-T3-6.** Confirm (or change) the two weapon test configurations:
+  - MachineGun: damage [5,8,12,16,20], fireInterval 0.2, bullet PlayerBullet_MG
+    (Straight, up, speed 12), 5 levels
+  - EnergyRing: damage [8,12,18,24,32], fireInterval 0.35, bullet
+    PlayerBullet_Ling (Straight, up, speed 8), 5 levels
+  - DefaultWeapon (assigned to PlayersShip) = MachineGun
+  - Both use the same audio clip (Laser_Shoot_1) for now — different clips later?
+  ANSWER: ______________________________
+
+  add more versions we need 5 wapon types and use the different movement types from the EassingFunctions code to get the bullet movement
+
+
+## 🎯 Scope — DONE in this task (strict)
+
+IN (must all work by the end of Task 3):
+1. SOWeaponSpecs ScriptableObject (weaponName, shootAudioClip, bulletPrefab,
+   damage/level data per Q-T3-1, maxLevel) — read-only properties.
+2. Weapon plain C# class (holds SOWeaponSpecs + level; IncreaseLevel/ResetLevel;
+   CurrentDamage lookup; read-only properties for FireInterval/BulletPrefab/etc).
+3. Bullet gains Damage (Init/Spawn) + OnCollision override (damage IDamageable,
+   Despawn self) — the "react to the other, act on yourself" pattern.
+4. PlayerController gains currentWeapon (Weapon) + fireTimer + FireAtInterval()
+   + FireCurrentWeapon() + SetWeapon/GetWeapon + (Q-T3-5 default) test hooks.
+5. Two SOWeaponSpecs assets + two Bullet prefabs (MG + Ling) built and tested.
+6. Full chain demonstrable: player fires → bullet moves (Task 2) → bullet hits
+   enemy → enemy takes damage → enemy dies at 0 HP → player can switch weapon +
+   level up → new bullets have higher damage.
+
+NOT DONE in this task (do NOT build these now):
+- ❌ Collectable/power-up system (drops, collection, weapon switch via pickup).
+- ❌ UI HUD showing weapon name/level (later task).
+- ❌ Enemy shooting (enemies have Fire() from Task 1 design but NO implementation
+      yet — that's a later task when enemies get their own weapon SOs).
+- ❌ Multi-shot / spread / homing bullets (the "3 selkeästi erilaista asetta"
+      requirement is met by 2 DIFFERENT SO assets + different bullet prefabs for
+      now; the 3rd weapon type is a later task).
+- ❌ Object pooling (bullets are Destroyed, not pooled — pooling is an optimization
+      for later, not required now).
+- ❌ InputController (later course deliverable per teacher).
+- ❌ Audio refactor (PlayerController still calls AudioController directly —
+      template issue, flagged in Task 1, not fixed here).
+
+AVOID (anti-goals — these would break rules or scope):
+- ❌ Putting weapon logic in a separate "WeaponComponent" MonoBehaviour on the
+  player (would violate §2.2 one-script rule AND §2.4 Weapon should be plain C#).
+- ❌ Making Weapon a MonoBehaviour (it has no Unity lifecycle need — §2.4).
+- ❌ Hard-coding per-weapon values in code — all tuning lives in SO assets (§2.8).
+- ❌ Per-frame GetComponent/Find (§2.6).
+- ❌ Using tags to identify "enemy bullet" vs "player bullet" (§2.3).
+- ❌ Renaming PlayerController or adding a new "PlayerWeaponController" (§2.1).
+- ❌ Creating a 3rd weapon type now (brief says "parille eri aseelle" = TWO).
+
+## 🚩 Assumptions (pending answers — safe defaults used in the design)
+
+- Task 1 + Task 2 are complete: SpaceObject + IDamageable + Bullet movement all
+  work. This task EXTENDS Bullet (adds Damage + collision) and PlayerController
+  (adds weapon state + firing) without changing their existing behavior.
+- "Plain C#" for Weapon = no MonoBehaviour, no UnityEngine using (except value
+  types if needed — Weapon doesn't even need Vector2, it just holds references).
+- The template's direct-input + direct-audio pattern in PlayerController is
+  ACCEPTED for this task (flagged in Task 1, not fixed now per teacher's Q4).
+- Two weapon types is enough for "demonstrable" — the 3rd type + 5 enemy types +
+  boss are later tasks per the course plan.

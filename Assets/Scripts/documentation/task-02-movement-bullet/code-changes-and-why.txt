@@ -1,0 +1,400 @@
+﻿# Task 2 — Movement & Bullet · Code Changes & Why
+
+> The "what changed and why" view. STATUS: CODE IMPLEMENTED (build clean).
+> This file was the DESIGN STAGE (full member-level API + code examples). The
+> design is now built — see ../IMPLEMENTATION-REPORT-tasks-1-3.txt for the
+> final file map, Unity Editor steps and tests. NOTE: per Q-T2-7 the test
+> enemies are EnemyVulture (Sine) + EnemyFalcon (Eased), not GreenSlime/PinkBall.
+
+## 1. What this task adds (class diagram)
+
+```
+MonoBehaviour
+└── SpaceObject : MonoBehaviour              (Task 1 — collision plumbing, ISpaceObject)
+    ├── PlayerController                     (Task 1 — MODIFIED in place)
+    ├── Enemy : SpaceObject                  (Task 1 — IDamageable, health, virtual Move/Fire)
+    │   ├── EnemyGreenSlime   (Task 2 — test enemy, SINE movement, own SO asset)
+    │   └── EnemyPinkBall     (Task 2 — test enemy, STRAIGHT or TARGET, own SO asset)
+    ├── Obstacle : SpaceObject               (Task 1)
+    ├── Collectable : SpaceObject (abstract) (Task 1)
+    └── Bullet : SpaceObject                 (Task 2 — STRAIGHT/TARGET movement, own SO asset)
+
+Plain C# (NO MonoBehaviour — §2.4):
+    MovementPatterns   (static pure functions: Straight / Sine / MoveToTarget)
+
+Data (ScriptableObject — §2.8 justified: movement identity is a prefab asset):
+    SOMovementParameters  (pattern, direction, speed, amplitude, frequency,
+                           duration, targetOffset)
+```
+
+**Why this shape:**
+- The teacher's brief: enemies AND bullets share the same movement patterns →
+  the pattern MATH lives in ONE pure C# class (no duplication, §2.7), while each
+  OBJECT keeps its own SO asset (per-variant tuning lives in data, not code).
+- EnemyGreenSlime/EnemyPinkBall extend Enemy (Task 1) — §2.2 (one script per
+  object) + §2.1 (no extra helper scripts; behavior via inheritance).
+- Bullet extends SpaceObject (brief) — it is a space object; it does NOT extend
+  Enemy (bullets are not enemies).
+
+## 2. SOMovementParameters (ScriptableObject)
+
+### 2.1 Full design (code example — implement exactly, pending Q-T2-1/Q-T2-5)
+
+```csharp
+using UnityEngine;
+
+/// <summary>
+/// Data-only movement definition. One asset per movement variant
+/// (e.g. "GreenSlimeMovementParameters"). Assigned to the owning object's
+/// script and consumed by the pure MovementPatterns functions.
+/// </summary>
+[CreateAssetMenu(fileName = "MovementParameters",
+                 menuName = "Game/Movement Parameters", order = 1)]
+public class SOMovementParameters : ScriptableObject
+{
+    public enum MovePattern
+    {
+        Straight,      // constant velocity along Direction
+        Sine,          // constant velocity along Direction + perpendicular sine offset
+        Target         // move from spawn position toward spawn + TargetOffset, then hold
+    }
+
+    [SerializeField] private MovePattern pattern = MovePattern.Straight;
+    [SerializeField] private Vector2 direction = Vector2.down;
+    [SerializeField] private float speed = 5f;
+    [SerializeField] private float amplitude = 0f;   // Sine only
+    [SerializeField] private float frequency = 0f;   // Sine only (full cycles per second)
+    [SerializeField] private float duration = 0f;    // 0 = move forever (until Despawn)
+    [SerializeField] private Vector2 targetOffset = Vector2.zero; // Target only
+
+    // Read-only API (external code reads, never writes — §2.7/§2.8)
+    public MovePattern Pattern => pattern;
+    public Vector2 Direction => direction;
+    public float Speed => speed;
+    public float Amplitude => amplitude;
+    public float Frequency => frequency;
+    public float Duration => duration;
+    public Vector2 TargetOffset => targetOffset;
+}
+```
+
+**Why these members:**
+- `MovePattern` enum (nested in the SO): the pattern is DATA, so it lives in the
+  data asset — a new pattern = new enum value + one new pure function + new assets,
+  zero changes to objects (extensibility requirement).
+- `direction` + `speed`: the two invariants of Straight/Target; Sine composes a
+  perpendicular offset on top of them.
+- `amplitude` + `frequency`: Sine-only tunables (0 = degenerate to Straight).
+- `duration`: 0 = forever; otherwise the object stops/Despawns after N seconds
+  (semantics per Q-T2-3). Needed so bullets can auto-clean later without a spawner.
+- `targetOffset`: MoveToTarget needs a DESTINATION; storing it as an OFFSET from
+  the spawn position (not world coords) makes the SO reusable for any spawn point.
+- `[CreateAssetMenu]` with `menuName = "Game/..."`: matches the teacher's
+  reference screenshot ("Game/Movement Parameters") → assets are created through
+  the menu, not hand-coded (§2.8: data, not code).
+- `private [SerializeField]` + expression-bodied read-only properties: identical
+  to your SOWeaponSpecs reference — the Task 3 refactor "SOMovementParameters
+  refaktorointi express bodied propertyihin" is already satisfied by this shape;
+  if you prefer plain getters in Task 2 and the arrow syntax in Task 3, the
+  member list is unchanged either way (see §2.4 note).
+
+### 2.2 Why a ScriptableObject (not a plain class, not per-object fields in code)
+- Per §2.8, tuning belongs in INSPECTOR DATA (prefab/SO assets), not in code
+  branches per enemy type. 5+ enemy types later = 5+ SO assets, ONE code path.
+- Per §2.4, the SO is data — the CONSUMERS (MovementPatterns) stay pure C#.
+- SO assets are shared: two enemies may legitimately share one pattern asset if
+  their movement is identical (reuse), or have distinct assets (variation).
+
+## 3. MovementPatterns (pure C# static class) — the heart of the task
+
+### 3.1 Contract (the strict criteria a new AI instance must satisfy)
+
+- Static class, all methods `public static`, NO fields, NO state, NO events.
+- NO ENGINE DEPENDENCY: the file must NOT touch MonoBehaviour, Object, GameObject,
+  Transform, Time, FindAnyObjectByType, or any engine service. `using UnityEngine;`
+  is present ONLY because Vector2/Vector3 are plain value structs (your reference
+  SO uses Vector2 too — accepted as "pure" for this course).
+- Every function is a PURE FUNCTION of its arguments: same input → same output.
+  No side effects, no allocations beyond value types, no logs.
+- Time is passed IN as `float elapsedSeconds` — the class never reads
+  `Time.time` (that is what makes it testable outside Unity, §2.4).
+- Units: `speed` is UNITS PER SECOND (world units/s), `frequency` is FULL SINE
+  CYCLES PER SECOND (so one full wiggle per 1/frequency seconds), `amplitude` in
+  world units perpendicular to Direction, `elapsedSeconds` ≥ 0.
+
+### 3.2 Code example (implement exactly)
+
+```csharp
+using System;      // MathF — pure .NET math, no engine dependency (Q-T2-5 default)
+
+// NOTE: Vector2/Vector3 are plain value structs (no MonoBehaviour, no engine
+// services). They are allowed in "pure C#" for this course (same as the
+// reference SOMovementParameters, which is a ScriptableObject holding Vector2).
+
+/// <summary>
+/// Pure, stateless movement pattern math. No Unity engine dependency:
+/// every function is a pure function of (params, elapsed, origin[, target]).
+/// Usable in any C# project that has the Vector2 type.
+/// </summary>
+public static class MovementPatterns
+{
+    /// <summary>Constant velocity along p.Direction. p = params, t = elapsed seconds.</summary>
+    public static Vector2 Straight(SOMovementParameters p, float t)
+    {
+        return p.Direction * (p.Speed * t);
+    }
+
+    /// <summary>
+    /// Straight motion + a perpendicular sine offset.
+    /// offset(t) = amplitude * sin(2π * frequency * t), perpendicular to Direction.
+    /// With amplitude = 0 this degenerates to Straight (backward compatible).
+    /// </summary>
+    public static Vector2 Sine(SOMovementParameters p, float t)
+    {
+        Vector2 straight = p.Direction * (p.Speed * t);
+        Vector2 perpendicular = new Vector2(-p.Direction.y, p.Direction.x);
+        float wave = p.Amplitude * MathF.Sin(2f * MathF.PI * p.Frequency * t);
+        return straight + perpendicular * wave;
+    }
+
+    /// <summary>
+    /// Move from origin toward (origin + p.TargetOffset), then HOLD at the target.
+    /// Position is a smooth linear interpolation over (|TargetOffset| / Speed) seconds.
+    /// </summary>
+    public static Vector2 MoveToTarget(SOMovementParameters p, float t, Vector2 origin)
+    {
+        Vector2 target = origin + p.TargetOffset;
+        float distance = p.TargetOffset.magnitude;
+        if (distance <= 0f) return origin;
+        float travelTime = distance / p.Speed;
+        float k = Math.Clamp(t / travelTime, 0f, 1f);   // 0→1, then clamp at 1
+        return Vector2.Lerp(origin, target, k);
+    }
+
+    /// <summary>
+    /// Convenience dispatcher (Q-T2-4 default: yes). ALWAYS returns an ABSOLUTE
+    /// position — objects call ONE line:
+    ///   transform.position = MovementPatterns.GetPosition(so, elapsed, origin);
+    /// (Straight/Sine return deltas internally, so the dispatcher adds the origin;
+    ///  MoveToTarget already returns an absolute position. See §3.3 convention.)
+    /// </summary>
+    public static Vector2 GetPosition(SOMovementParameters p, float t, Vector2 origin)
+    {
+        switch (p.Pattern)
+        {
+            case SOMovementParameters.MovePattern.Straight:
+                return origin + Straight(p, t);
+            case SOMovementParameters.MovePattern.Sine:
+                return origin + Sine(p, t);
+            case SOMovementParameters.MovePattern.Target:
+                return MoveToTarget(p, t, origin);   // already absolute
+            default:
+                return origin;
+        }
+    }
+}
+```
+
+### 3.3 CONVENTION — the one subtle thing that must be consistent
+
+`Straight` and `Sine` return a DELTA (offset from origin): `origin + f(p, t)`.
+`MoveToTarget` returns an ABSOLUTE position (it already includes origin).
+The dispatcher `GetPosition` normalizes this: it ALWAYS returns an absolute
+position. **Objects MUST call `GetPosition`** (the dispatcher) and assign:
+`transform.position = MovementPatterns.GetPosition(so, elapsed, spawnOrigin);`
+This keeps every object's Update() identical and removes per-pattern branching
+from object code (§2.7: objects don't know HOW, the pure class knows HOW).
+
+### 3.4 Why pure functions + time passed in (the "why" the teacher asked for)
+- Testable: `MovementPatterns.Sine(p, 0.25f)` returns a known vector — assert it
+  in a plain C# unit test, no Unity, no Play Mode. This is the §2.4 portability
+  goal in practice.
+- Deterministic: no hidden `Time.time` → no "works in editor, breaks in build"
+  surprises; easy to scrub time for debug/visualization later.
+- Reusable: the SAME class serves enemies, bullets, (later) collectable drops,
+  boss patterns — one implementation, zero duplication (§2.7).
+
+## 4. Bullet : SpaceObject (Task 2 scope ONLY — movement + identity)
+
+### 4.1 Members (code example)
+
+```csharp
+using UnityEngine;
+
+public class Bullet : SpaceObject
+{
+    // The bullet's OWN movement identity — one SO per bullet prefab (§2.8).
+    [SerializeField] private SOMovementParameters movementParameters;
+
+    private float elapsed;            // seconds this bullet has been alive
+    private Vector2 spawnOrigin;      // position at spawn (Target pattern anchor)
+
+    private void Awake()
+    {
+        spawnOrigin = transform.position;      // capture once, never re-fetch (§2.6)
+    }
+
+    private void Update()
+    {
+        if (movementParameters == null) return;   // asset not assigned — fail soft
+        elapsed += Time.deltaTime;
+
+        // ONE line of movement — the pure class knows HOW (Straight/Sine/Target).
+        transform.position = MovementPatterns
+            .GetPosition(movementParameters, elapsed, spawnOrigin);
+
+        // Duration handling (Q-T2-3 default): stop moving when time elapses.
+        if (movementParameters.Duration > 0f && elapsed >= movementParameters.Duration)
+        {
+            Deactivate();   // Task 1 base method — game-state off, stops reacting
+            // Despawn() is intentionally NOT called yet: destruction is a Task 3 item.
+        }
+    }
+}
+```
+
+**Why these members:**
+- `movementParameters` [SerializeField]: the bullet's movement is DATA assigned
+  per prefab (§2.8 justified: "a prefab reference that must be assigned once").
+  This is the §2.8 exception the rule itself allows.
+- `spawnOrigin` cached in Awake: §2.6 (resolve once, never per-frame Find).
+- `elapsed` accumulated with `Time.deltaTime`: frame-rate independent, matches
+  the pure-function contract (time in seconds passed IN).
+- `Update` is 6 lines: guard → tick → one-line pattern call → duration check.
+  No branching on pattern in object code (§2.7).
+- **What Bullet does NOT have in Task 2** (strict scope): `Damage`, `Init(int damage)`,
+  `OnCollision` override, firing source reference, Despawn-on-hit. Those are Task 3.
+
+### 4.2 Why Bullet : SpaceObject (not : Enemy, not standalone MonoBehaviour)
+- Brief: "Bullet-luokka tulee uutena ja periytyy myös SpaceObject-luokasta."
+- SpaceObject gives it: IsActive/Activate/Deactivate (Task 1), the collision
+  adapter (Task 1), Despawn (Task 1) — exactly what a bullet will need in Task 3,
+  WITHOUT any enemy-specific members (health, Fire) it doesn't have. This is the
+  "don't put in the base what derived classes don't need" rule working correctly:
+  Bullet inherits only the COMMON plumbing.
+
+## 5. Enemy test subclasses (GreenSlime + PinkBall)
+
+### 5.1 Members (code example — both are near-identical by design)
+
+```csharp
+using UnityEngine;
+
+public class EnemyGreenSlime : Enemy
+{
+    [SerializeField] private SOMovementParameters movementParameters;
+
+    private float elapsed;
+    private Vector2 spawnOrigin;
+
+    private void Awake() => spawnOrigin = transform.position;
+
+    private void Update()
+    {
+        if (movementParameters == null) return;
+        elapsed += Time.deltaTime;
+        transform.position = MovementPatterns
+            .GetPosition(movementParameters, elapsed, spawnOrigin);
+        // Duration / Despawn intentionally absent — enemies are not auto-despawned
+        // in Task 2 (they persist until a later spawn/despawn system kills them).
+    }
+}
+```
+
+`EnemyPinkBall : Enemy` is the SAME shape with its own SO asset (different
+pattern/tunables). The ONLY difference between the two classes is which SO asset
+is assigned in the Inspector — that is the data-driven design working:
+**behavior variation lives in DATA (SO assets), not in code branches.**
+
+### 5.2 Why two thin subclasses instead of one Enemy + config
+- The course spec requires 5+ DISTINCT enemy types and a BossEnemy extending
+  Enemy. GreenSlime/PinkBall prove the inheritance chain works end-to-end
+  (Enemy → concrete) before the real 5 types are built.
+- Each subclass can later add its own members (e.g. PinkBall could gain a
+  bouncing Move() override) without touching GreenSlime — isolated extension.
+- §2.2 (one script per object) is satisfied: each prefab carries exactly ONE of
+  these concrete classes.
+
+## 6. File layout (where each new file lives)
+
+```
+Assets/Scripts/ScriptableObjects/SOMovementParameters.cs   (NEW)
+Assets/Scripts/Logic/MovementPatterns.cs                   (NEW)
+Assets/Scripts/GameObjects/Bullet.cs                        (NEW)
+Assets/Scripts/GameObjects/EnemyGreenSlime.cs              (NEW)
+Assets/Scripts/GameObjects/EnemyPinkBall.cs                (NEW)
+Assets/ScriptableObjects/EnemyMovement/GreenSlimeMovementParameters.asset  (NEW, Unity)
+Assets/ScriptableObjects/EnemyMovement/PinkBallMovementParameters.asset    (NEW, Unity)
+Assets/ScriptableObjects/Bullets/PlayerBulletMovementParameters.asset      (NEW, Unity)
+Assets/Prefabs/EnemyGreenSlime.prefab                       (NEW, Unity)
+Assets/Prefabs/EnemyPinkBall.prefab                         (NEW, Unity)
+Assets/Prefabs/PlayerBullet.prefab                          (NEW, Unity)
+Assets/Scripts/Helper/EassingFunctions.cs                   (EXISTING — reused, Q-T2-1)
+Assets/Scripts/ApplicationController.cs                     (MODIFIED — test-spawn hook, Q-T2-6)
+```
+
+## 7. Rule-compliance checklist (verify at step B8)
+
+**§2.1 fixed controllers keep names** — ✅ PlayerController/ApplicationController
+are only MODIFIED in place (ApplicationController gains a test-spawn method per
+Q-T2-6; no rename, no new controller).
+
+**§2.2 one script per object** — ✅ Each prefab (GreenSlime, PinkBall, PlayerBullet)
+carries exactly ONE custom script (the concrete class). No MovementComponent, no
+helper scripts stacked on top.
+
+**§2.3 types not tags** — ✅ No CompareTag, no tag strings, no layers used for
+logic. Pattern selection is by the SO's enum value (a type-level data field).
+
+**§2.4 MonoBehaviour only when necessary** — ✅ MovementPatterns is a plain static
+class (zero MonoBehaviour, zero engine services). SOMovementParameters is a
+ScriptableObject (data asset — allowed, it is not a MonoBehaviour). Bullet/Enemy
+subclasses ARE MonoBehaviours (they need Update — justified).
+
+**§2.5 scene independence** — ✅ No scene lookups. Objects read their own
+SerializeField SO; the test-spawn hook (Q-T2-6 default) Instantiates from
+Resources/Prefabs at runtime, so the game boots from any scene.
+
+**§2.6 no repeated reference fetching** — ✅ spawnOrigin cached in Awake;
+movementParameters is a serialized field (no GetComponent per frame). The only
+per-frame work is the pure-function call + transform write.
+
+**§2.7 separation of responsibilities** — ✅ Movement MATH in MovementPatterns;
+movement DATA in SOMovementParameters; movement EXECUTION in each object's Update.
+No object branches on pattern; no pattern code knows about Unity objects.
+
+**§2.8 minimize Inspector** — ✅ All per-variant tuning (pattern, direction,
+speed, amplitude, frequency, duration, targetOffset) lives in SO assets, NOT in
+code branches. The only [SerializeField] on objects is the SO reference itself
+(a justified one-time assignment per prefab).
+
+## 8. What NOT to build in this task (strict — do NOT implement these now)
+
+- ❌ SOWeaponSpecs, Weapon, firing, collision/damage — that is Task 3.
+- ❌ Object pooling, spawn waves, boss, power-up drops, UI, lives, score.
+- ❌ InputController (later course deliverable per teacher).
+- ❌ A "MovementComponent" MonoBehaviour or a singleton MovementManager.
+- ❌ A second copy of EasingFunctions (reuse the template's per Q-T2-1 default).
+- ❌ Renaming/moving PlayerController or any existing controller (§2.1).
+- ❌ Per-enemy if/else in code for "is this a slime or a ball" — use the SO asset.
+
+## 9. Acceptance criteria (the "strict criteria" — all must be true)
+
+1. `MovementPatterns.cs` uses ONLY `Vector2`/`Vector3` (plain value structs) from
+   UnityEngine — NO MonoBehaviour, Object, GameObject, Transform, Time, Find*, or
+   any engine service (that is the "pure C#" criterion for this course).
+2. `MovementPatterns.Sine(p, 0f)` returns `p.Direction * 0 + perp * sin(0) = (0,0)`
+   relative — i.e. origin. `Straight(p, 1f)` returns `p.Direction * p.Speed`.
+3. `Sine` with `amplitude = 0` produces IDENTICAL results to `Straight` (same t).
+4. `MoveToTarget(p, t, origin)` with `t = 0` returns `origin`; with
+   `t ≥ |TargetOffset|/Speed` returns `origin + TargetOffset` (clamped, no overshoot).
+5. `GetPosition` returns an ABSOLUTE position for ALL three patterns.
+6. Bullet prefab in Play Mode moves along its SO's Direction at Speed units/s,
+   continuously, for Duration seconds (or forever if 0).
+7. GreenSlime and PinkBall move along DIFFERENT patterns (Sine vs Straight/Target)
+   and are visually distinguishable (sprite + shape).
+8. Console is CLEAN (no errors, no per-frame warnings) over a 10s Play session.
+9. Build from a BLANK scene (no prefabs placed) runs with zero errors (§2.5) —
+   objects only appear when the test-spawn hook runs.
+10. All five new .cs files + the SO asset + three prefabs exist and are referenced
+    correctly (no "Missing (SOMovementParameters)" in any prefab's Inspector).

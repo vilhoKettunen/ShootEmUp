@@ -1,0 +1,187 @@
+﻿# Task 2 — Movement & Bullet · Learned Lessons & Concepts
+
+> The "how does it actually work" view. Concepts used by the Task 2 design,
+> explained the way they matter for THIS course (rules §2.1–§2.8).
+
+## 1. Pure functions — the "pure C#" requirement, made concrete
+
+A PURE FUNCTION has no side effects and depends ONLY on its inputs. Same input
+→ same output, every time, in any environment. In this project that means:
+
+- `MovementPatterns.Sine(p, t)` does not read `Time.time`, does not touch
+  `transform`, does not log, does not allocate, does not look anything up.
+- Consequence: you can write a plain C# test like
+  `Assert.AreEqual(new Vector2(1, 3), Sine(p, 0.5f));` with NO Unity.
+- This is §2.4 (MonoBehaviour only when necessary) taken one step further:
+  even the Vector2 type is a plain struct — the function is portable to
+  a console app, a web backend, or a different engine, unchanged.
+
+**The one rule that makes it "pure":** time must be an INPUT. If the function
+calls `Time.time` internally, it is no longer pure — the editor clock becomes a
+hidden dependency. Passing `elapsed` in (accumulated by the object with
+`Time.deltaTime`) is what keeps the math clean and testable.
+
+## 2. Why "data asset + pure function" is better than "code per enemy"
+
+Two ways to make a GreenSlime wiggle and a PinkBall go straight:
+
+```
+WRONG (code-driven, not extensible):
+  if (this is GreenSlime)  move = SineWiggle(...);
+  else if (this is PinkBall) move = Straight(...);
+
+RIGHT (data-driven, this task):
+  transform.position = MovementPatterns.GetPosition(movementParameters, elapsed, origin);
+```
+
+The RIGHT version has ZERO per-enemy code. The difference between the two
+enemies is a DATA file (the .asset) created in the Inspector. When the course
+later asks for 5+ enemy types, you create 5 SO assets and maybe reuse 2 patterns
+— you do NOT add 5 more code branches. This is the course goal "helposti
+laajennettavissa / määriteltävissä" (easily extendable / configurable) in action.
+
+## 3. ScriptableObject — "an asset that is data"
+
+- A ScriptableObject is a MonoBehaviour-LESS class that exists as a FILE in the
+  project (right-click → Create → …). It is shared data: many prefabs can
+  reference the SAME .asset.
+- `[CreateAssetMenu]` is what puts it on that Create menu (the `menuName` is
+  why your reference shows "Game/Movement Parameters").
+- `[SerializeField] private` + read-only properties = the SO is configurable in
+  the Inspector but NOT mutable at runtime (§2.7: data assets are read, not
+  written, by game code).
+- SOs are the course's sanctioned place for "tuning that changes per variant"
+  (§2.8): weapon specs (Task 3), movement (Task 2), later wave definitions.
+  The rule says MINIMIZE Inspector usage — the intent is: keep CODE clean, keep
+  DATA in assets. Don't read §2.8 as "no Inspector at all"; read it as "no
+  hardcoded per-variant numbers in code".
+
+## 4. The perpendicular trick (Sine pattern geometry)
+
+To wiggle SIDEWAYS while moving along `d = (dx, dy)`:
+
+- A perpendicular vector to d is `(-dy, dx)` (a 90° rotation). Derivation:
+  dot product d·perp = dx·(−dy) + dy·dx = 0 → orthogonal by construction.
+- Sine wave: `sin(2π·f·t)` completes one full cycle in `1/f` seconds. So
+  `frequency = 1` = one wiggle per second; `frequency = 2` = two wiggles/s.
+- Amplitude is added ALONG the perpendicular: `pos = straight + perp·amp·sin(...)`.
+  With `amp = 0` the formula collapses to plain Straight — that's why Sine with
+  zero amplitude is a safe default and why the pattern set is "backward
+  compatible" (Sine ⊇ Straight, Target is the third case).
+
+Worked example (GreenSlime default): direction (0,−1), speed 3, amplitude 1.5,
+frequency 1. At t=0.25: straight = (0,−0.75); perp = (1,0); wave = 1.5·sin(π/2)
+= 1.5 → position = (1.5, −0.75) relative to spawn. At t=0.5: wave = 0 → (0,−1.5).
+You can verify both by hand — that's the point of a pure function.
+
+## 5. Lerp + clamp = "move to target, then stop" without physics
+
+`MoveToTarget` is NOT physics — it's parameterized motion:
+
+```
+travelTime = |offset| / speed          // how long the trip SHOULD take
+k = clamp(elapsed / travelTime, 0, 1)  // 0 at start, 1 at arrival, STAYS 1
+pos   = Lerp(origin, target, k)        // smooth 0→1 interpolation
+```
+
+- `Vector2.Lerp(a, b, k)` = `a + (b − a)·k` — a straight-line blend.
+- The `clamp` is the "stop at the target" behavior: after travelTime seconds,
+  k stays 1 and the object HOLDS position. No overshoot, no spring, no velocity.
+- Why not Rigidbody2D + target? Physics adds mass/friction/solver cost and
+  couples you to the physics engine (against the "portable math" goal).
+  Parameterized motion is deterministic and testable — and for a shmup's enemy
+  approach patterns, deterministic is exactly what a scripted wave needs.
+
+## 6. deltaTime vs. fixedDeltaTime vs. Time.time — which one and why
+
+- `Time.deltaTime` = time since LAST frame. Use it to ACCUMULATE (`elapsed +=
+  Time.deltaTime`) — frame-rate independent: 60 fps and 144 fps both give the
+  same real-world speed.
+- `Time.time` = time since game start. Using it directly means every object's
+  "elapsed" is GLOBAL — bad when objects spawn at different moments (a bullet
+  spawned at t=10s would instantly be "10 seconds old"). So we accumulate.
+- `Time.fixedDeltaTime` = physics step. Only relevant for Rigidbody2D work —
+  not used here (no physics in the movement system).
+
+## 7. Why the dispatcher (GetPosition) exists — and its one convention
+
+Objects should not `switch` on the pattern — that would duplicate the pattern
+knowledge in EVERY object (bullet, 2 enemies, later 5+ enemies, boss…). The
+dispatcher centralizes the switch in ONE place (the pure class).
+
+CONVENTION (easy to get wrong — read twice):
+- `Straight(p, t)` and `Sine(p, t)` return a DELTA (relative offset).
+- `MoveToTarget(p, t, origin)` returns an ABSOLUTE position (it must, because it
+  clamps at a world-space target).
+- `GetPosition(...)` ALWAYS returns ABSOLUTE. Objects only ever write:
+  `transform.position = MovementPatterns.GetPosition(so, elapsed, spawnOrigin);`
+If a future AI instance mixes the conventions up, bullets will "double-offset"
+(delta added to a delta) — the acceptance criteria in code-changes §9 exist to
+catch exactly that.
+
+## 8. Awake/Update lifecycle for a spawned (not scene-placed) object
+
+Objects in this task come from PREFABS, instantiated at runtime (§2.8 spirit):
+
+```
+Instantiate(prefab) → Awake (cache spawnOrigin) → OnEnable → Start (none) →
+Update (every frame: elapsed += dt; position = GetPosition(...))
+```
+
+- `Awake` runs ONCE at instantiation — the right moment to capture
+  `spawnOrigin` (it's still the prefab's authored position) and to cache any
+  references (§2.6: resolve once).
+- `Update` runs every frame while active — the right place for per-frame
+  movement. (LateUpdate would be "after everything else moved" — not needed here.)
+- No `Start` needed: we have nothing to wait for (no other object to query —
+  which is itself a §2.5 win: no scene dependency).
+- If the object's SO is missing, we `return` softly (no NullReference spam) —
+  the missing asset is an EDITOR problem, surfaced in the prefab's Inspector.
+
+## 9. "One script per object" and why inheritance is the ONLY growth path
+
+Rule §2.2 says an interactive object carries EXACTLY ONE custom script. So when
+an enemy needs special behavior, you do NOT add a "WiggleBehaviour" component
+next to it — you give the object a CLASS that already has the behavior:
+`EnemyPinkBall : Enemy` (and later `BossEnemy : Enemy`). The component model
+stacks scripts; the type system extends classes. The course deliberately wants
+the second one — it's what makes `List<SpaceObject>` and `is` checks (§2.3)
+work as your object vocabulary grows (5+ enemies + boss + 3 weapons + bullets).
+
+## 10. What "testing movement" means concretely in Play Mode
+
+No unit test framework is required for THIS course, so "test" = observable
+editor behavior + clean console. The concrete checks (from code-changes §9):
+
+1. Spawn GreenSlime: it should DRIFT downward while oscillating left-right at a
+   steady 1 wiggle/second (frequency 1). Watch ≥2 full wiggles.
+2. Spawn PinkBall: straight vertical descent at constant speed (or, if you chose
+   Target, a descent that EASES to a stop at spawn+offset — no, HOLDs at it).
+3. Spawn PlayerBullet: constant-speed straight rise; stops after its duration
+   (if duration > 0) — verify the stop frame: it should sit exactly at
+   spawn + Direction·Speed·duration (hand-computable!).
+4. Open the SO assets, change GreenSlime's frequency 1 → 2, re-enter Play Mode:
+   the wiggle must be TWICE as fast. If it isn't, the frequency math is wrong.
+5. Console: zero red, zero yellow, across a 10s session.
+
+These hand-checkable numbers (position at t, wiggle count) are possible ONLY
+because the math is pure — that's the payoff of the whole design.
+
+## 11. Quick self-test (answer before checking code-changes-and-why.txt)
+
+1. Why can't `MoveToTarget` just return a delta like Straight/Sine?
+   *(It must clamp at a TARGET that is defined relative to the spawn origin —
+     the clamp boundary is only knowable with the origin in hand, so the
+     function takes origin and returns an absolute position.)*
+2. What goes wrong if two enemies share one SO asset and you later want the
+   PinkBall to speed up?
+   *(You'd have to either duplicate the asset (fine) or add a code override
+     (bad — back to per-type code). Lesson: give each DISTINCT movement its own
+     asset.)*
+3. Why is `elapsed` accumulated instead of `Time.time − spawnTime`?
+   *(Mathematically identical IF you stored spawnTime — but accumulation in
+     Update is the Unity idiom, pauses correctly with Time.timeScale, and
+     costs one addition per frame.)*
+4. Which course rule does "MovementPatterns has no fields" satisfy?
+   *(§2.4 — it needs no Unity lifecycle and no state, so it must not be a
+     MonoBehaviour; a static pure class is the honest shape.)*

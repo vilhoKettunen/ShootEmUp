@@ -1,0 +1,238 @@
+﻿# Task 1 — SpaceObject base class · Code Changes & Why
+
+> The "what changed and why" view. STATUS: CODE IMPLEMENTED (build clean).
+> This file was the DESIGN STAGE (member-level API + rationale). The design is
+> now built as described — see ../IMPLEMENTATION-REPORT-tasks-1-3.txt for the
+> final file map, the Unity Editor steps and the test checklist.
+
+## 1. The class hierarchy
+
+```
+MonoBehaviour
+└── SpaceObject            (abstract — shared "game object" plumbing)
+    ├── PlayerController   (existing class, MODIFIED to inherit — name & file kept, §2.1)
+    ├── Enemy              (base for future enemy types + BossEnemy, per course spec)
+    ├── Obstacle           (indestructible hazards)
+    └── Collectable        (power-ups / bombs that enemies drop)
+        (later tasks: Bullet : SpaceObject, BossEnemy : Enemy, weapon/power-up classes)
+```
+
+**Why this shape:**
+- The task demands a SpaceObject base + these four derived classes.
+- Enemy is itself a future BASE (BossEnemy extends it, 5+ enemy types) — the course
+  spec says the boss must extend Enemy, so Enemy must stay a class, not an abstract
+  concept.
+- SpaceObject is ABSTRACT: an object that is only a "space object" with no concrete
+  behavior would be useless in the game. abstract makes it impossible to attach it
+  directly to a GameObject — you must pick a real kind. This is C#'s way of saying
+  "this is a category, not a thing" (see learned-lessons-and-concepts.txt §1–2).
+
+## 2. What goes into the base class — and the reasoning
+
+The task's guiding question: "Is a method useful in the base class if every derived
+class overrides it, or is there something common to all collisions?"
+
+**Answer we adopt:** there ARE two things common to every collision, so the base
+class owns the PLUMBING (the Unity message + a guard), and the DECISION is virtual:
+
+1. An inactive object must not react to anything. (A dead enemy, a spent bullet, a
+   collected power-up should not cause damage.) This check is identical for all four
+   classes → belongs in the base class once.
+2. Unity messages only fire on MonoBehaviours, so the OnTriggerEnter2D adapter must
+   live on a MonoBehaviour — the base class is the natural single place.
+
+Everything ELSE differs (what a hit does, what gets collected…) → virtual overrides.
+
+### Members of SpaceObject (design)
+
+**1) `private bool isActive` + `public bool IsActive { get; private set; }`**
+- Access: private field, public read-only property
+- Why: Active state ≠ GameObject.activeSelf (the task says so explicitly). The game
+  (e.g. wave manager, player) must READ it; only the object's own logic may CHANGE it.
+- Rule: §2.7 (separation — external code sees state, never mutates it)
+
+**2) `public virtual void Activate()`**
+- Access: public virtual
+- Why: Called from outside (spawner) AND from the object itself (e.g. reset).
+  Subclasses may add behavior (e.g. reset health) — hence virtual, with a sensible
+  base implementation (set isActive = true).
+- Rule: §2.7
+
+**3) `public virtual void Deactivate()`**
+- Access: public virtual
+- Why: Same as Activate; base impl sets isActive = false. Subclasses add
+  (stop moving, etc.).
+- Rule: §2.7
+
+**4) `public virtual void Despawn()`**
+- Access: public virtual
+- Why: "Object removal" ≠ Object.Destroy (the task says so explicitly). Our own
+  method = the object's removal ritual: deactivate, then Object.Destroy(gameObject).
+  Subclasses can add (e.g. play death effect — later task). The base provides the
+  common part once → no duplication.
+- Rule: §2.2 / §2.7
+
+**5) `protected virtual void OnCollision(SpaceObject other)`**
+- Access: protected virtual
+- Why: Subclasses override; OTHER CODE must not call collision logic directly (it's
+  event-driven) → protected, not public.
+- Rule: §2.7
+
+**6) `private void OnTriggerEnter2D(Collider2D other)`**
+- Access: private (Unity message — the engine finds it by name)
+- Why: Thin adapter: resolves the other SpaceObject, applies the COMMON GUARD
+  (`if (!IsActive || !other.IsActive) return;`), then calls OnCollision(other).
+  Private because it's plumbing, not an API.
+- Rule: §2.3 (type resolution, no tags) / §2.6 (one GetComponent per event, not per frame)
+
+### What we deliberately do NOT put in the base class
+
+- **TakeDamage** — Obstacle and Collectable don't take damage. Putting it in the base
+  would violate "don't put in the base class what derived classes don't need" (task
+  text) → solved with a capability interface instead (see §3).
+- **Movement** — player moves by input, enemies by pattern, obstacles by scroll,
+  collectibles by gravity-drop. The HOW differs too much; each class gets its own
+  movement member. (The WHERE — Update() — is fine to repeat, it's one line each.)
+- **Firing** — only Player and Enemy fire; Obstacle/Collectable never will.
+
+## 3. The IDamageable interface (key design decision — answer to Q3)
+
+```csharp
+public interface IDamageable
+{
+    void TakeDamage(int amount);
+}
+```
+
+- PlayerController and Enemy IMPLEMENT it; Obstacle and Collectable do NOT.
+- Anything that can deal damage (later: Bullet) does a TYPE CHECK — not a tag:
+  `if (other is IDamageable damageable) { … }` — fully compliant with §2.3
+  ("types, not tags") because IDamageable IS a type.
+- Interfaces are plain C# (not MonoBehaviour) → satisfies §2.4's portability goal.
+- This is the C#-idiomatic answer to "some classes need it, some don't":
+  INHERITANCE for "is-a" (everything is a SpaceObject), INTERFACE for "can-do"
+  (some things can be damaged).
+
+## 4. Member-level design of the four classes
+
+### 4.1 PlayerController : SpaceObject, IDamageable  *(modify the EXISTING class)*
+
+**1) `public void TakeDamage(int amount)` (from IDamageable)**
+- Why: Player owns its own hit response (§2.7: player handles its own state).
+  Reduces lives (the lives themselves live in game state / ApplicationController —
+  the player only reports), deactivates + Despawn() on death.
+
+**2) `public void Collect(Collectable collectable)`**
+- Why: Player owns the "what do I gain" logic; called from the player's own
+  OnCollision when it sees a Collectable.
+
+**3) `protected override void OnCollision(SpaceObject other)`**
+- Why: Dispatch by type: `if (other is Enemy …) TakeDamage(…)`,
+  `if (other is Obstacle …) TakeDamage(…)`, `if (other is Collectable c …) Collect(c)`.
+
+**4) existing `moveSpeed`, input, `OnFire` — UNCHANGED for now**
+- Why: Input/audio leave this class only when InputController arrives + in a later
+  refactor task (see dev-actions.txt "Known template issues").
+
+### 4.2 Enemy : SpaceObject, IDamageable
+
+**1) `private int health`**
+- Why: Enemy's own state; only its own code changes it (encapsulation).
+
+**2) `public void TakeDamage(int amount)`**
+- Why: From IDamageable; at 0 → Deactivate() + Despawn() (+ later: drop Collectable).
+
+**3) `protected virtual void Move()`**
+- Why: Movement pattern is the defining difference between the 5 enemy types →
+  virtual so future Enemy subclasses (and BossEnemy) override. Base can be
+  empty/straight-line.
+
+**4) `protected virtual Vector2 GetAimDirection()`**
+- Why: Course spec: enemies differ in shooting direction → virtual hook, BossEnemy
+  overrides decisively later.
+
+**5) `public virtual void Fire()`**
+- Why: Called by the enemy's own timer/logic (later task); virtual so the boss can
+  do multi-shot.
+
+**6) `protected override void OnCollision(SpaceObject other)`**
+- Why: `if (other is PlayerController player) player.TakeDamage(…)`;
+  `if (other is Bullet) TakeDamage(bullet.Damage)` (Bullet arrives in a later task).
+
+### 4.3 Obstacle : SpaceObject  *(NOT IDamageable — indestructible)*
+
+**1) `protected override void Move()`**
+- Why: Scrolling hazard motion (implementation in a later task).
+
+**2) `protected override void OnCollision(SpaceObject other)`**
+- Why: Obstacle is PASSIVE: it doesn't command the player — the PLAYER's own
+  OnCollision decides it gets hit. Obstacle may Despawn() itself after hitting a
+  bullet (later task).
+
+**3) NO TakeDamage at all**
+- Why: This class is the proof that the interface approach (not a base-class method)
+  was the right call.
+
+### 4.4 Collectable : SpaceObject  *(NOT IDamageable)*
+
+**1) `private WeaponType type` (enum, plain C#) + `public WeaponType Type { get; }`**
+- Why: A collectable IS its payload data (which weapon; later: which level).
+  A plain C# enum = portable, editor-independent (§2.4).
+
+**2) `public virtual void Collect()`**
+- Why: The ritual: apply payload (later) + Despawn(). Virtual so a "bomb" collectable
+  can behave differently.
+
+**3) `protected override void OnCollision(SpaceObject other)`**
+- Why: `if (other is PlayerController player) player.Collect(this);` — the collectable
+  points the player at itself, but the GAIN LOGIC stays in the player (§2.7).
+
+**4) `protected override void Move()`**
+- Why: Drop/gravity motion (implementation in a later task).
+
+### Cross-cutting design rules we applied
+
+1. **React to the other, act on yourself.** Each object inspects the OTHER'S type and
+   then applies the effect to ITSELF (player damages itself, bullet despawns itself).
+   Nobody calls into the other's internals except its own public API — keeps §2.7
+   separation clean.
+2. **No duplication:** the active-guard + Unity adapter + despawn ritual exist exactly
+   once (in SpaceObject), while behavior differences stay in subclasses.
+3. **Minimum in base:** nothing weapon/health/payload related in the base (task rule).
+
+## 5. Rule-compliance checklist (verify in step B7)
+
+**§2.1 fixed controllers keep names** — ✅
+PlayerController is MODIFIED in place, not recreated; no new class steals controller
+duties.
+
+**§2.2 one script per object** — ✅
+Each GameObject carries exactly one of the four classes (Unity-side check in C1).
+
+**§2.3 types not tags** — ✅
+All distinction is via `is` / type checks / interfaces; zero tag usage.
+
+**§2.4 MonoBehaviour only when needed** — ✅
+SpaceObject must be a MonoBehaviour (Unity messages) — justified; IDamageable +
+WeaponType are plain C#.
+
+**§2.5 scene independence** — ✅
+No scene lookups; objects are self-contained components (prefabs later).
+
+**§2.6 no repeated reference fetching** — ✅
+Only one GetComponent<SpaceObject>(), inside a discrete collision event (not
+per-frame); references to own components (none yet) would be cached in Awake.
+
+**§2.7 separation of responsibilities** — ✅
+Collision plumbing in base; state/response in each class; lives/weapon state NOT in
+the player (later: game state).
+
+**§2.8 minimize Inspector** — ✅
+No [SerializeField] in any new class; moveSpeed on the player is pre-existing (keep).
+
+## 6. What NOT to change in this task
+
+- No implementation bodies (task says design-level is enough for now — fill bodies in
+  the tasks that actually use them).
+- No changes to ApplicationController, UIController, AudioController.
+- No input/audio refactor of PlayerController (arrives with the InputController task).

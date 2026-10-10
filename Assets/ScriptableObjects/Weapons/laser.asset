@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69fd1ccf6f2040a44a53cc7aff4d5316, type: 3}
+  m_Name: laser
+  m_EditorClassIdentifier: Assembly-CSharp::SOWeaponSpecs
+  weaponName: Laser
+  shootAudioClip: {fileID: 8300000, guid: 660bfb3143148134485824c58f87ee83, type: 3}
+  bulletPrefab: {fileID: 3911284158991931837, guid: b0d91b2663b47414295be73c07dd7f30, type: 3}
+  bulletMovement: {fileID: 11400000, guid: 0896bd8423f1aa74a899cbbdbc44d5a4, type: 2}
+  spawnOffset: {x: 0, y: 0.8}
+  fireInterval: 0.15
+  maxLevel: 5
+  baseDamage: 15
+  damagePerLevel: 0a0000000e000000130000001900000020000000

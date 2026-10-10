@@ -1,0 +1,209 @@
+﻿# Task 2 — Movement (MovementPatterns + SOMovementParameters) & Bullet · Dev Actions
+
+> The "what do I do / what's left" checklist. Tick items as they are completed.
+> STATUS: CODE IMPLEMENTED (build clean). Remaining = Unity Editor steps (SO
+> assets + prefabs, see ../IMPLEMENTATION-REPORT-tasks-1-3.txt §4) + Play-Mode
+> tests (§5). NOTE: per Q-T2-7 the test enemies are EnemyVulture + EnemyFalcon
+> (space theme, kenney Ships folder), not GreenSlime/PinkBall.
+
+## Teacher's brief (Finnish, summarized)
+
+- Add Kryzarel's C# easing functions to the project (link to gist provided).
+- Create a general `MovementPatterns` class: common movement patterns usable by
+  BOTH enemies and bullets. Starts with THREE patterns: Straight, Sine, MoveToTarget.
+- `MovementPatterns` functions are PURE FUNCTIONS: no Unity connection, reusable in
+  any C# project. Functions take a `SOMovementParameters` object as a parameter.
+- `SOMovementParameters` is a ScriptableObject: defines the pattern, direction,
+  speed, optional sine amplitude/frequency, and the MoveToTarget destination.
+- `Bullet` is a NEW class, also inherits `SpaceObject` (Task 1 base).
+- For testing: Awake + Update methods that initialize and run the patterns with
+  each object's own SOMovementParameters values (different per enemy / bullet).
+- Build prefabs: EnemyGreenSlime, EnemyPinkBall, a PlayerBullet, plus the related
+  SOMovementParameters assets. Test the movement with two enemies + one bullet.
+- OUT OF SCOPE for this stage: instantiation / destruction / collision of enemies
+  and bullets (but DO build the prefabs for the next stages).
+
+## ✅ Done
+
+- [x] Read the teacher's Task 2 brief and the reference diagram (SOMovementParameters
+      fields, project tree, prefab/SO asset layout)
+- [x] Verified the template ALREADY ships Kryzarel-style easing:
+      `Assets/Scripts/Helper/EassingFunctions.cs` (namespace Kryz.Tweening,
+      static class EasingFunctions, In/Out/InOut families) — currently UNUSED
+- [x] Verified `Assets/Scripts/InputSystem_Actions.cs` exposes Player.Move,
+      Player.Jump, Player.Attack (generated file, do not edit)
+- [x] Audited prefab/asset layout: prefabs live in `Assets/Prefabs/` (+Resources);
+      no ScriptableObjects folder exists yet
+- [x] Confirmed Task 1 design (SpaceObject + IDamageable + OnCollision) is the
+      foundation this task builds on — Bullet : SpaceObject fits the hierarchy
+- [x] Wrote the three task documents (this folder) + updated the roadmap file
+
+## ⬜ To do — in this order
+
+### A. Decide the design (BEFORE writing code)
+- [ ] **A1.** Review code-changes-and-why.txt §1–§6 and the rule checklist §7
+- [ ] **A2.** Answer Open Questions Q-T2-1 … Q-T2-7 (teacher)
+- [ ] **A3.** Lock the file/folder layout (see code-changes §6) and the SO asset
+      names/values for the two enemies + one bullet (defaults proposed in Q-T2-7)
+
+### B. Write the code (order matters — data asset first, then pure logic, then objects)
+- [ ] **B1.** Create `Assets/Scripts/ScriptableObjects/SOMovementParameters.cs`
+      (ScriptableObject + [CreateAssetMenu], pattern enum, serialized fields,
+      read-only properties — NOT expression-bodied yet: that refactor is scheduled
+      in Task 3 per the teacher's plan, see code-changes §2.4)
+- [ ] **B2.** Create `Assets/Scripts/Logic/MovementPatterns.cs` — PURE C# static
+      class: Straight, Sine, MoveToTarget + (pending Q-T2-4) a GetPosition dispatcher.
+      NO MonoBehaviour, NO per-object state, NO Find/GetComponent.
+- [ ] **B3.** Create `Assets/Scripts/GameObjects/Bullet.cs` : SpaceObject — Awake
+      (cache own SOMovementParameters + spawn position), Update (accumulate time,
+      set transform.position via MovementPatterns), duration handling per Q-T2-3.
+      Damage/Init is a Task 3 item — keep a placeholder note only.
+- [ ] **B4.** Create `Assets/Scripts/GameObjects/EnemyGreenSlime.cs` : Enemy —
+      same Awake/Update movement shape, own SOMovementParameters (Sine default).
+- [ ] **B5.** Create `Assets/Scripts/GameObjects/EnemyPinkBall.cs` : Enemy —
+      same shape, own SOMovementParameters (Straight or Target per Q-T2-7).
+- [ ] **B6.** Add the test-spawn hook agreed in Q-T2-6 (default: ApplicationController)
+- [ ] **B7.** Build — zero errors/warnings; boot from the Main scene (§2.5)
+- [ ] **B8.** Re-run the rule-compliance checklist (code-changes §7)
+- [ ] **B9.** Update AGENTS.md §3 Code Map + Task Progress Log (workflow rule 7)
+
+### C. Unity editor work (after B compiles)
+- [ ] **C1.** Create ScriptableObject assets (right-click → Create → Game → Movement
+      Parameters), suggested names/values (see Q-T2-7 for confirmation):
+        - `Assets/ScriptableObjects/EnemyMovement/GreenSlimeMovementParameters`
+          (pattern Sine, direction down, speed 3, amplitude 1.5, frequency 1,
+          duration 0)
+        - `Assets/ScriptableObjects/EnemyMovement/PinkBallMovementParameters`
+          (pattern Straight, direction down, speed 2, amplitude 0, frequency 0,
+          duration 0) — OR Target with targetOffset (0,-5) if Q-T2-7 picks that
+        - `Assets/ScriptableObjects/Bullets/PlayerBulletMovementParameters`
+          (pattern Straight, direction up, speed 10, duration ~1.5s or 0)
+- [ ] **C2.** Create prefabs in `Assets/Prefabs/`:
+        - `EnemyGreenSlime` — sprite + BoxCollider2D (Is Trigger ON) + EnemyGreenSlime
+          script with its SO assigned
+        - `EnemyPinkBall` — sprite + CircleCollider2D (Is Trigger ON) + EnemyPinkBall
+          script with its SO assigned
+        - `PlayerBullet` — sprite + BoxCollider2D (Is Trigger ON) + Bullet script with
+          its SO assigned
+      (collider "Is Trigger" per Task 1 learned-lessons §6 — the collision system
+      arrives in Task 3, but set it now so prefabs are final)
+- [ ] **C3.** Verify each prefab has EXACTLY ONE custom script (§2.2)
+- [ ] **C4.** Play-Mode test: both enemies move per their own pattern, bullet flies
+      straight up; observe ≥5s; confirm no per-frame warnings in Console
+
+## 📋 Open Questions (for the teacher — PENDING, fill in your answers)
+
+- **Q-T2-1.** The template ALREADY contains Kryzarel's easing set at
+  `Assets/Scripts/Helper/EassingFunctions.cs` (static, pure Math, unused). Options:
+  (a) REUSE it as-is — no new file, no duplication (my default); (b) replace it with
+  a fresh copy from the gist; (c) rename file/class to fix the "Eassing" typo.
+  Also: should MovementPatterns USE easing (e.g. eased MoveToTarget approach), or
+  is easing just a general utility available for later tasks (my default: utility)?
+  ANSWER: ______________________________
+
+  A) reuse the existing file thats why its there i brought it acording to teachers instructions 
+  its supoosed to be used to make the movement patterns for different enemey types and bullets and other things 
+  that move in the game so it should be used as a utility for now and then later on it can be used to make more complex 
+  movement patterns for different enemies and bullets
+
+- **Q-T2-2.** HOW does Bullet/Enemy get its SOMovementParameters?
+  (a) [SerializeField] on the object's own script, assigned per prefab in the
+  Inspector (my default — each prefab owns its movement identity; justified §2.8);
+  (b) injected at spawn time via an Init/Spawn method (no serialized field);
+  (c) looked up from Resources by name (NOT recommended — §2.5/§2.8 smell).
+  ANSWER: ______________________________
+
+  B) injected at spawn time based on the type of bullet or enemy that is being spawned and the movement pattern that is assigned 
+  to it in the scriptable object so that each bullet and enemy can have its own unique movement pattern and behavior based on the 
+  scriptable object that is assigned to it
+
+- **Q-T2-3.** Semantics of the SO `duration` field:
+  (a) 0 = "move forever"; when duration elapses the object Despawn()s itself
+  (my default for bullets; enemies keep 0);
+  (b) duration elapses → object FREEZES in place, despawn stays a later task;
+  (c) duration is unused in Task 2 (kept on the SO for later).
+  ANSWER: ______________________________
+
+  A) 0 = "move forever"; when duration elapses the object Despawn()s itself (my default for bullets; enemies keep 0)
+
+- **Q-T2-4.** API shape: the three pure functions are mandatory. May I also add one
+  small convenience dispatcher on MovementPatterns:
+  `public static Vector2 GetPosition(SOMovementParameters p, float elapsed, Vector2 origin, Vector2 target)`
+  that switches on p.Pattern? (a) yes (my default — callers stay one-liners);
+  (b) no, each object calls the specific function itself.
+  ANSWER: ______________________________
+
+  A) yes
+
+- **Q-T2-5.** Math library inside the pure functions:
+  (a) `MathF`/`Math` from System — ZERO UnityEngine dependency (matches the brief's
+  "no Unity connection" + the template's EasingFunctions already uses Math);
+  (b) Unity's `Mathf`. (Vector2/Vector3 are plain structs and stay as the
+  coordinate type either way — same as in your reference screenshot.)
+  My default: (a). ANSWER: ______________________________
+
+  use MathF/Math from System — ZERO UnityEngine dependency (matches the brief's "no Unity connection" + the template's EasingFunctions already uses Math)
+
+- **Q-T2-6.** How do the two enemies + the bullet get into the world for testing?
+  (a) a small test-spawn in ApplicationController (runtime Instantiate — §2.8
+  friendly, my default); (b) place the three prefabs directly in the Main scene
+  (simplest, but against the "objects instantiated from prefabs at runtime" spirit);
+  (c) a dedicated Test scene.
+  ANSWER: ______________________________
+
+  A) a small test-spawn in ApplicationController (runtime Instantiate — §2.8 friendly, my default)
+  but make a test boolian i can turn on and off in the inspector to set if the test spawns should happen or not
+  and later we can add more to the testing system wen needed
+
+- **Q-T2-7.** Confirm (or change) the test configuration + asset names:
+  GreenSlime = Sine (down, speed 3, amplitude 1.5, frequency 1);
+  PinkBall = Straight (down, speed 2)  [or Target with offset (0,-5)?];
+  PlayerBullet = Straight (up, speed 10);
+  asset paths: ScriptableObjects/EnemyMovement/*, ScriptableObjects/Bullets/*
+  (folders mirror your reference screenshot's project tree).
+  ANSWER: ______________________________
+
+  this is a space game so we use 
+  the models from this folder "Assets/models/kenney_spaceShooterExtension/PNG/Sprites X2/Ships" 
+  theres 8 total ships so we can have 1 as the player ship and 7 small enemy ships
+
+  and thease rockets can be the bosses theres 4 "Assets/models/kenney_spaceShooterExtension/PNG/Sprites X2/Rockets"
+
+  name them acording to space theames or ships or planets or something like that for enemeys and bosses 
+
+## 🎯 Scope — DONE in this task (strict)
+
+IN (must all work by the end of Task 2):
+1. SOMovementParameters ScriptableObject (pattern enum + 6 tunables + read-only props).
+2. MovementPatterns pure C# static class: Straight, Sine, MoveToTarget (+ dispatcher
+   if Q-T2-4a). Stateless: f(params, elapsed[, origin, target]) → position.
+3. Bullet : SpaceObject — moves via its own SO in Awake/Update.
+4. EnemyGreenSlime : Enemy and EnemyPinkBall : Enemy — each moves via its OWN SO.
+5. Three prefabs + three SO assets built and Play-Mode tested.
+6. Easing functions available in the project (reuse or replace per Q-T2-1).
+
+NOT DONE in this task (do NOT build these now):
+- Weapon system, SOWeaponSpecs, Weapon class (Task 3).
+- Collision / damage / destruction logic (Task 3).
+- Firing from player or enemies (Task 3).
+- Spawn/despawn systems, pooling, waves, boss, UI, lives, power-up drops.
+- InputController (later course deliverable per teacher).
+
+AVOID (anti-goals — these would break rules or scope):
+- ❌ A separate "MovementComponent" script on objects (would violate §2.2 one-script
+  rule AND duplicate what the object's own script already does).
+- ❌ Making MovementPatterns a MonoBehaviour / singleton / instance class (§2.4).
+- ❌ Hard-coding per-enemy behavior in code — all per-variant values go into SO assets.
+- ❌ Per-frame GetComponent/Find anywhere (§2.6).
+- ❌ Using Unity tags/layers to distinguish objects (§2.3).
+- ❌ Creating a second easing class next to the template's (duplication).
+- ❌ Renaming or moving PlayerController or any controller (§2.1).
+
+## 🚩 Assumptions (pending answers — safe defaults used in the design)
+
+- Task 1 design is final as documented (SpaceObject abstract, IDamageable,
+  OnCollision virtual, IsActive guard) — Bullet plugs into it without changes.
+- "Pure C#" for MovementPatterns = no MonoBehaviour/Transform/Time/GameObject;
+  Vector2/Vector3 value types are acceptable (they are plain math structs, and your
+  own reference SOMovementParameters uses Vector2).
+- One SO asset per movement variant (data-driven), exactly your reference layout.

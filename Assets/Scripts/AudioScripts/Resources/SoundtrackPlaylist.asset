@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ae2719df7b33b1418c54ca64444176a, type: 3}
+  m_Name: SoundtrackPlaylist
+  m_EditorClassIdentifier: 
+  tracks:
+  - Name: Intro
+    MusicClip: {fileID: 8300000, guid: 7080331207a4c024388143cc61de1eae, type: 3}
+  - Name: Track1
+    MusicClip: {fileID: 8300000, guid: 889bab2e3c91f58478e73dea4179432e, type: 3}
+  - Name: Track2
+    MusicClip: {fileID: 8300000, guid: 42bb6be5f7a68d544a9562f8cba34a77, type: 3}
+  - Name: Jing3
+    MusicClip: {fileID: 8300000, guid: 6e1c1e1df8903f1418941460bf38a931, type: 3}
+  - Name: BattleIntro
+    MusicClip: {fileID: 8300000, guid: b018132574fd165469df61b182df243a, type: 3}
+  - Name: MenuIntro
+    MusicClip: {fileID: 8300000, guid: 9a2dd4d54fe4e9e4aa9e1ef845c087c2, type: 3}
+  - Name: Credits
+    MusicClip: {fileID: 8300000, guid: 22568d14efe0b8c41b9750e4d2ad1847, type: 3}
+  - Name: OpeningCredits
+    MusicClip: {fileID: 8300000, guid: c09a4323e050d9d43941b4c2566739de, type: 3}

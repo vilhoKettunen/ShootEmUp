@@ -1,0 +1,93 @@
+﻿# Task 1 — SpaceObject base class · Dev Actions
+
+> IMPLEMENTED (code done, build clean). See ../IMPLEMENTATION-REPORT-tasks-1-3.txt
+> for the file map, Unity Editor steps and the test checklist.
+
+## ✅ Done
+
+- [x] Read the course rules and locked them into AGENTS.md (§2.1–2.8)
+- [x] Audited the template code (ApplicationController, PlayerController, UIController, AudioController, helpers)
+- [x] Discovered rule violations in the template — see "Known template issues" below
+- [x] Designed the class hierarchy and member-level API (see code-changes-and-why.txt §1)
+- [x] Wrote the three task documents (this folder)
+- [x] Converted docs to .txt and reflowed to max 158 chars per line
+
+## ⬜ To do — in this order
+
+### A. Decide the design (before writing code)
+- [ ] **A1.** Review the design in code-changes-and-why.txt §1–§3 and the "why" in §4
+- [ ] **A2.** Decide on the three open design questions (below, "Open Questions") — ask the teacher if unsure
+- [ ] **A3.** Decide how to handle the template's rule violations (see "Known template issues", Q4)
+
+### B. Write the code (order matters — base class first)
+- [ ] **B1.** Create `Assets/Scripts/GameObjects/SpaceObject.cs` (base class)
+- [ ] **B2.** ❌ Do NOT create a new PlayerController. Instead MODIFY the EXISTING
+      `Assets/Scripts/PlayerController.cs` to inherit `SpaceObject` (rule §2.1: the class keeps its name and location)
+- [ ] **B3.** Create `Assets/Scripts/GameObjects/Enemy.cs`
+- [ ] **B4.** Create `Assets/Scripts/GameObjects/Obstacle.cs`
+- [ ] **B5.** Create `Assets/Scripts/GameObjects/Collectable.cs`
+- [ ] **B6.** Build in Unity — zero errors/warnings (rule §2.5: must boot from any scene)
+- [ ] **B7.** Re-run the rule-compliance checklist in code-changes-and-why.txt §5
+
+### C. Unity editor work
+- [ ] **C1.** (Later, when prefabs exist) Verify every interactive object has exactly ONE custom script on it (§2.2) — check in the Inspector
+- [ ] **C2.** Confirm no tags are used anywhere — check Project Settings → Tags and Layers (§2.3)
+- [ ] **C3.** When prefab colliders are set, mark them as "Is Trigger" (the design uses `OnTriggerEnter2D` — see learned-lessons §6)
+
+## 📋 Open Questions (for the teacher)
+
+- **Q1.** Should Collectable be ABSTRACT (power-ups/bombs inherit from it)? The task
+  lists it as a class to implement — is it a concrete class, or a base for power-ups?
+
+  collectables should be a abstract class attleast for now 
+  so they should mainley be for power ups for now but stay modular so changes can be made and edited later and since theres
+  different types of of power ups so the collectible should stay semi abstract
+
+- **Q2.** The task says "avoid code duplication" but also "don't put in the base class
+  what derived classes don't need". Where do you draw the line for firing/weapon
+  logic — does Enemy get its own Fire (yes, we assume so), and does SpaceObject get
+  NO weapon-related members at all (we assume yes)?
+
+  enemeys should use the same fire method as the player but we use configure them individually based on the enemey type and the way that the fireing happends 
+
+- **Q3.** Should SpaceObject implement an IDamageable-style interface later, or should
+  TakeDamage(...) already be a virtual method in the base class now? (Affects whether
+  bullets can target any SpaceObject via a common type — rule §2.3 "types, not tags")
+
+  yes types should be used instead of tags and the take damage method should be in the base class so that all objects can be damaged by bullets and other things that can cause damage
+
+- **Q4.** THE TEMPLATE VIOLATES THE COURSE RULES TODAY — see "Known template issues"
+  below. How should I handle it? Options: (a) leave it, it gets fixed in a later
+  task; (b) fix it now as part of this task; (c) confirm which option.
+  DEFAULT ASSUMPTION: flag it, don't fix it yet.
+
+  dont fix it now, flag it and leave it for later tasks to fix
+
+## 🚨 Known template issues (rule violations in the STARTER code)
+
+Found during audit of `Assets/Scripts/PlayerController.cs`:
+
+**Issue 1 — PlayerController handles INPUT directly (InputSystem_Actions, `moveInput`, `OnFire`)**
+- Rule broken: §2.7 (separation) + §2.1 (input belongs to InputController)
+- Detail: template predates InputController, which arrives later per teacher.
+- Action: leave for now — input logic leaves this class when InputController arrives.
+
+**Issue 2 — PlayerController plays AUDIO (`AudioController.Instance.PlaySoundEffect("Laser_Shoot_1")`)**
+- Rule broken: §2.7 (separation)
+- Detail: audio playback decisions belong to AudioController; the player should only
+  report "I fired" and let the controller play the sound.
+- Action: leave for now, flag in later refactor task.
+
+**Issue 3 — PlayerController is instantiated via Instantiate<PlayerController>(
+Resources.Load<PlayerController>("PlayersShip")) in ApplicationController.Init()**
+- Rule broken: none (it's used as a prefab component, which is fine per §2.2)
+- Detail: note that once PlayerController : SpaceObject, this instantiation still works.
+- Action: none — just be aware of it.
+
+**Issue 4 — `moveSpeed` is a [SerializeField] on the player**
+- Rule broken: borderline §2.8 (minimize Inspector usage)
+- Detail: genuinely needed for tuning the player ship; acceptable to keep for now.
+- Action: keep, revisit if a later task moves tuning data out of scripts.
+
+**Assumption (pending Q4):** Issues 1 and 2 stay until a later task explicitly refactors
+input/audio out of PlayerController. Do NOT silently "fix" them in this task.

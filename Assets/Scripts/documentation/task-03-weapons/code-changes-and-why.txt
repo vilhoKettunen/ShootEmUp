@@ -1,0 +1,506 @@
+﻿# Task 3 — Weapon System & Bullet Collision · Code Changes & Why
+
+> The "what changed and why" view. STATUS: CODE IMPLEMENTED (build clean).
+> This file was the DESIGN STAGE (full member-level API + code examples). The
+> design is now built — see ../IMPLEMENTATION-REPORT-tasks-1-3.txt for the
+> final file map, Unity Editor steps and tests. NOTE: per Q-T3-6 there are 5
+> weapon types (not 2); Weapon + SOWeaponSpecs + Bullet collision all implemented.
+
+## 1. What this task adds (class diagram)
+
+```
+Data (ScriptableObject — §2.8: weapon identity is a prefab/SO asset):
+    SOWeaponSpecs  (weaponName, shootAudioClip, bulletPrefab, damage data,
+                    fireInterval, maxLevel)
+
+Plain C# (NO MonoBehaviour — §2.4):
+    Weapon  (holds one SOWeaponSpecs + current level; IncreaseLevel/ResetLevel)
+
+MonoBehaviour (runtime objects):
+    PlayerController : SpaceObject      (GAINS: currentWeapon, fireTimer, firing)
+    Bullet : SpaceObject                (GAINS: Damage, Init, OnCollision override)
+    Enemy (+GreenSlime/PinkBall)        (UNCHANGED — receives damage via Task 1 API)
+
+Flow at runtime:
+  input (Player.Attack) → PlayerController.FireAtInterval() →
+  AudioController plays weapon.ShootAudioClip →
+  b = Instantiate(currentWeapon.BulletPrefab) → b.Init(currentWeapon.CurrentDamage) →
+  bullet moves (Task 2 MovementPatterns) → bullet overlaps enemy →
+  bullet.OnCollision → enemy.TakeDamage(b.Damage) → bullet.Despawn()
+```
+
+**Why this shape:**
+- SOWeaponSpecs = "WHAT is this weapon?" (static data — §2.8 data asset).
+- Weapon = "WHAT IS THE CURRENT STATE?" (level; mutable at runtime) — plain C#
+  because it needs NO Unity lifecycle (§2.4). It is created per weapon switch:
+  `currentWeapon = new Weapon(specs)` exactly as the brief shows.
+- Bullet = "the projectile in the world" — the only MonoBehaviour of the three.
+- This is the classic DATA / STATE / ACTOR split: add a 4th weapon later = create
+  ONE new SO asset + maybe a new bullet prefab; ZERO code changes.
+
+## 2. SOWeaponSpecs (ScriptableObject)
+
+### 2.1 Full design (code example — implement exactly; Q-T3-1 default = per-level array)
+
+```csharp
+using UnityEngine;
+
+/// <summary>
+/// Static definition of one weapon type. One asset per weapon
+/// (e.g. "MachineGunWeaponSpecs"). Assigned to the player's Weapon instance.
+/// </summary>
+[CreateAssetMenu(fileName = "WeaponSpecs",
+                 menuName = "Game/Weapon Specs", order = 2)]
+public class SOWeaponSpecs : ScriptableObject
+{
+    [SerializeField] private string weaponName = "Weapon";
+    [SerializeField] private AudioClip shootAudioClip;         // matches the reference design
+    [SerializeField] private Bullet bulletPrefab;              // the projectile to spawn
+    [SerializeField] private float fireInterval = 0.2f;        // seconds between shots
+    [SerializeField] private int[] damagePerLevel = { 1, 2, 3, 4, 5 }; // index 0 = level 1
+    [SerializeField] private int maxLevel = 5;
+
+    // Read-only API (external code reads, never writes — §2.7/§2.8)
+    public string WeaponName => weaponName;
+    public AudioClip ShootAudioClip => shootAudioClip;
+    public Bullet BulletPrefab => bulletPrefab;
+    public float FireInterval => fireInterval;
+    public int MaxLevel => maxLevel;
+
+    /// <summary>Damage dealt at 1-based level L (clamped to [1, MaxLevel]).</summary>
+    public int DamageAtLevel(int level)
+    {
+        level = Mathf.Clamp(level, 1, maxLevel);
+        return damagePerLevel[level - 1];
+    }
+}
+```
+
+**Why these members (compared to the reference screenshot):**
+- `weaponName`, `shootAudioClip`, `bulletPrefab`, `fireInterval`, `damage`,
+  `maxLevel` are EXACTLY the reference fields. The only addition is
+  `damagePerLevel` (Q-T3-1 default) which REPLACES the single `damage` int so
+  the 5 weapon levels are real (brief: "5 eri tasoja tehokkuutta"). If you answer
+  Q-T3-1 with option (b), delete `damagePerLevel`/`DamageAtLevel` and keep a
+  single `damage` + a `damageGrowthMultiplier` float instead.
+- `bulletPrefab` is typed `Bullet` (a class reference), NOT a GameObject — this
+  is how §2.3 "types, not tags" shows up in a field: the compiler knows the
+  prefab carries a Bullet, and `Instantiate<Bullet>(bulletPrefab)` returns a
+  typed object. (The reference screenshot uses `public Bullet BulletPrefab =>
+  bulletPrefab;` — same shape.)
+- `fireInterval` stays ON THE SPEC (the brief says "fireRate jää
+  PlayerControllerin vastuulle" = the FIRING TIMING LOGIC stays in the player;
+  the NUMBER itself is weapon data — the player reads it from the Weapon, which
+  reads it from the spec. This is consistent with the reference: the player's
+  `fireTimer = currentWeapon.FireInterval;`).
+- `maxLevel` per spec: different weapons may have different level caps later.
+- `[CreateAssetMenu]` with `menuName = "Game/Weapon Specs"`: matches the teacher's
+  reference screenshot exactly.
+
+### 2.2 Why the bullet PREFAB lives here (and not in Bullet)
+- One weapon = one projectile identity (sprite, movement, damage source). Putting
+  the prefab reference on the SPEC (not on Bullet) means Bullet stays dumb:
+  it doesn't know WHICH weapon made it — it only knows its Damage (Init) and its
+  movement (its own SO). This is §2.7 separation: the projectile is a generic
+  actor; the weapon spec is the identity.
+- It also means two weapons CAN share a bullet prefab if they want to (e.g. two
+  MGs with different fire rates) — the prefab is shared data.
+
+## 3. Bullet — EXTENDED (Task 3 adds Damage + collision to the Task 2 class)
+
+### 3.1 What Task 2 gave it vs. what Task 3 adds
+
+```
+Task 2 (movement):          Task 3 (damage + collision):
+  movementParameters SO      + public int Damage { get; private set; }
+  spawnOrigin (Awake)        + public void Init(int damage)
+  elapsed (Update)           + protected override void OnCollision(SpaceObject other)
+  Update → GetPosition(...)
+```
+
+### 3.2 Code example — the NEW members only (add to the existing Bullet class)
+
+```csharp
+using UnityEngine;
+
+public class Bullet : SpaceObject
+{
+    // ---- Task 2 members (unchanged): movementParameters, spawnOrigin, elapsed,
+    // ---- Awake(), Update() with GetPosition(...) — see Task 2 doc §4.1.
+
+    // ---- Task 3 additions: damage + collision handling.
+
+    private int damage;   // set once at spawn via Init — §2.6 (resolve once)
+
+    /// <summary>
+    /// Called by the spawner (PlayerController) IMMEDIATELY after Instantiate.
+    /// Sets the damage this bullet deals (depends on the player's weapon level).
+    /// </summary>
+    public void Init(int damage)
+    {
+        this.damage = damage;
+    }
+
+    public int Damage => damage;
+
+    /// <summary>
+    /// Task 1 base method (virtual). When this bullet overlaps ANOTHER
+    /// SpaceObject: if that object can be damaged, deal our damage to it;
+    /// then the bullet is spent → Despawn() (Task 1 removal ritual).
+    /// "React to the other, act on yourself" (Task 1 lesson §10).
+    /// </summary>
+    protected override void OnCollision(SpaceObject other)
+    {
+        if (other is IDamageable damageable)
+        {
+            damageable.TakeDamage(Damage);
+        }
+        // Q-T3-3 default: bullet is spent on ANY SpaceObject overlap.
+        Despawn();
+    }
+}
+```
+
+**Why these members (and why they are shaped this way):**
+- `damage` is PRIVATE + `Damage` is a READ-ONLY property: the bullet's damage is
+  FIXED at spawn (Init) — it never changes in flight. External code (enemies,
+  player) reads it; nobody writes it. Encapsulation per Task 1 lesson §4.
+- `Init(int damage)` instead of a constructor: MonoBehaviour CANNOT have
+  constructors (Unity instantiates them). The spawner calls `b.Init(damage)`
+  right after `Instantiate` — this is the standard Unity pattern for "constructor
+  with parameters" on components. The brief literally says "Init/Spawn -metodin
+  kautta" — we implement exactly that.
+- `OnCollision` override (not a new OnTriggerEnter2D): Task 1 put the Unity
+  message + IsActive guard in SpaceObject; Bullet just provides the DECISION.
+  One script per object (§2.2), one collision pipeline (§2.7).
+- `if (other is IDamageable)` — TYPE CHECK, no tags (§2.3). This is the exact
+  pattern from Task 1: a bullet can hit ANY damageable (enemy now, player later
+  if enemy bullets exist, destructible obstacle later) without knowing concrete
+  types.
+- `Despawn()` after damage: the bullet is SPENT (its job is done). Whether it
+  also despawns on non-damageable overlap is Q-T3-3 (default: yes).
+- **What Bullet does NOT get**: a reference back to the player, a "friendly
+  fire" flag, a team ID, pooling hooks. None of those are needed yet; adding
+  them now would be scope creep + §2.8 violations.
+
+## 4. Weapon (plain C# — the STATE holder)
+
+### 4.1 Code example (implement exactly; matches the reference screenshot + Q-T3-1)
+
+```csharp
+/// <summary>
+/// Runtime STATE of one weapon instance (which spec + current level).
+/// Plain C# — NO MonoBehaviour (it needs no Unity lifecycle — §2.4).
+/// Created by the player: currentWeapon = new Weapon(specs).
+/// </summary>
+public class Weapon
+{
+    private readonly SOWeaponSpecs definition;
+    private int level;
+
+    public Weapon(SOWeaponSpecs definition) : this(definition, 1) { }
+
+    public Weapon(SOWeaponSpecs definition, int startingLevel)
+    {
+        this.definition = definition;
+        // Course spec: switching weapons KEEPS the current level → start at it.
+        // Plain C# clamp (Weapon has NO UnityEngine dependency — §2.4).
+        this.level = Math.Max(1, Math.Min(startingLevel, definition.MaxLevel));
+    }
+
+    // ---- Read-only view of the spec (delegated properties) ----
+    public string Name => definition.WeaponName;
+    public int MaxLevel => definition.MaxLevel;
+    public float FireInterval => definition.FireInterval;
+    public Bullet BulletPrefab => definition.BulletPrefab;
+    public AudioClip ShootAudioClip => definition.ShootAudioClip;
+
+    /// <summary>Damage the CURRENT level deals (spec knows the per-level table).</summary>
+    public int CurrentDamage => definition.DamageAtLevel(level);
+
+    // ---- State mutation (the ONLY things that change a Weapon) ----
+
+    /// <summary>Raise the weapon one level (clamped at MaxLevel).</summary>
+    public void IncreaseLevel()
+    {
+        if (level < MaxLevel)
+        {
+            level++;
+        }
+    }
+
+    /// <summary>Reset to level 1 (called on player death per course spec).</summary>
+    public void ResetLevel()
+    {
+        level = 1;
+    }
+
+    public int Level => level;   // for the UI HUD (later task) + debugging
+}
+```
+
+**Why this shape (compared to the reference):**
+- The reference shows `private readonly SOWeaponSpecs definition; private int
+  level;` + the same properties + `IncreaseLevel`/`ResetLevel` — we match it.
+- The ONLY addition is `CurrentDamage` (delegated to `definition.DamageAtLevel`)
+  which is what PlayerController passes to `b.Init(...)` and what makes the 5
+  levels MEANINGFUL (Q-T3-1 default). If Q-T3-1 answers (b), `CurrentDamage`
+  becomes `definition.Damage * level` instead — one-line change, nothing else
+  moves. That's the "easily extendable" goal: the level→damage mapping is
+  isolated in ONE method.
+- `Weapon` is NOT a MonoBehaviour: it has no Update, no references to engine
+  services, no lifecycle — making it one would violate §2.4. It is a POCO
+  (plain old C# object). Its only Unity-namespace types are REFS to data
+  (AudioClip, Bullet prefab) — same accepted nuance as MovementPatterns using
+  Vector2 (plain value types / references, no engine services).
+- `readonly definition`: once a Weapon is constructed for a spec, it never
+  changes spec (switching weapon = NEW Weapon instance, per the brief's
+  `currentWeapon = new Weapon(weaponSpecs)`).
+- `Level` is public-read (UI needs it later; debugging needs it now) but
+  private-write (only IncreaseLevel/ResetLevel change it — §2.7).
+
+## 5. PlayerController — MODIFIED (the wiring; §2.1: name & file kept)
+
+### 5.1 What changes (ADD these members to the EXISTING class — do not rewrite)
+
+```csharp
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+public class PlayerController : SpaceObject   // (Task 1 change — already in the plan)
+{
+    [SerializeField] private float moveSpeed = 8f;              // existing — keep
+
+    // ---- Task 3 additions (weapon system) ----
+    [SerializeField] private SOWeaponSpecs defaultWeapon;       // assigned in Inspector
+    private Weapon currentWeapon;                                // runtime state
+    private float fireTimer;                                     // fire-rate clock
+
+    private InputSystem_Actions controls;                        // existing — keep
+    private Vector2 moveInput;                                   // existing — keep
+
+    // ---- existing Awake/OnEnable/OnDisable/Update/OnFire — UNCHANGED
+    //    (input + audio stay here for now per Task 1 "Known template issues")
+
+    private void Start()
+    {
+        // Brief: currentWeapon = new Weapon(DefaultWeapon);
+        currentWeapon = new Weapon(defaultWeapon);
+    }
+
+    private void Update()
+    {
+        // existing movement line (kept verbatim from the template):
+        Vector3 movement = new Vector3(moveInput.x, moveInput.y, 0f);
+        transform.position += movement * moveSpeed * Time.deltaTime;
+
+        // Task 3: fire-rate gate (the "fireRate on the player's responsibility" line)
+        FireAtInterval();
+    }
+
+    private void FireAtInterval()
+    {
+        fireTimer -= Time.deltaTime;
+        if (controls.Player.Attack.IsPressed() && fireTimer <= 0f)
+        {
+            FireCurrentWeapon();
+            fireTimer = currentWeapon.FireInterval;
+        }
+    }
+
+    private void FireCurrentWeapon()
+    {
+        // AUDIO: template pattern — player tells the audio controller (Task 1
+        // "Known issues" says this leaves the class later; keep it for now).
+        if (currentWeapon.ShootAudioClip != null)
+        {
+            AudioController.Instance.PlaySoundEffect(currentWeapon.ShootAudioClip);
+        }
+
+        // SPAWN the bullet (typed — §2.3) and hand it the level-scaled damage.
+        Bullet b = Instantiate<Bullet>(currentWeapon.BulletPrefab);
+        b.transform.position = transform.position;
+        b.Init(currentWeapon.CurrentDamage);
+    }
+
+    // ---- Test hooks (Q-T3-5 default — REMOVE before final submission) ----
+    public void SetWeapon(SOWeaponSpecs specs)
+    {
+        // Course spec: switching to a DIFFERENT weapon KEEPS the current level.
+        currentWeapon = new Weapon(specs, currentWeapon != null ? currentWeapon.Level : 1);
+    }
+
+    public void TestLevelUp()  => currentWeapon.IncreaseLevel();
+    public void TestResetLevel() => currentWeapon.ResetLevel();
+}
+```
+
+**Why these members (and why the template code is kept, not rewritten):**
+- `defaultWeapon` [SerializeField]: the ONE justified Inspector assignment per
+  §2.8 (a prefab/SO reference that must be set once, on the ship prefab). This is
+  exactly the `DefaultWeapon` from the reference diagram.
+- `currentWeapon` (Weapon): the brief's exact line `currentWeapon = new
+  Weapon(DefaultWeapon);` — we implement it in `Start()` (not Awake, because
+  Weapon is a POCO that doesn't need Unity's Awake timing; Start also guarantees
+  all other components' Awakes have run, so nothing else is half-built).
+- `fireTimer` + `FireAtInterval()`: the template's `OnFire` was instant-fire on
+  key press; the brief wants a fire RATE (fireInterval from the spec). We keep
+  the `controls.Player.Attack.IsPressed()` input hook (template pattern, Input
+  Controller is later) but gate it by the timer. This is the "fireRate jää
+  PlayerControllerin vastuulle" line from the brief — the NUMBER comes from the
+  Weapon (spec), the TIMING LOGIC lives in the player.
+- `FireCurrentWeapon()`: three lines of real work — play audio, spawn bullet,
+  set damage. Each line maps to a rule: audio → AudioController (§2.7, player
+  only REPORTS the event); spawn → typed Instantiate (§2.3); damage →
+  `CurrentDamage` (level-scaled, §2.7 data-driven).
+- `SetWeapon`/`TestLevelUp`/`TestResetLevel`: the Q-T3-5 default test hooks.
+  They are PUBLIC so the test-spawn key (or a later Collectable) can call them.
+  They are clearly marked "REMOVE before final submission" because the real
+  weapon-switch trigger is the Collectable system (a later task) — these are
+  scaffolding, not product.
+
+### 5.2 Why we do NOT refactor input/audio in this task
+- Task 1's "Known template issues" (Issues 1 & 2) explicitly say: leave the
+  input + audio in PlayerController until InputController arrives (later course
+  deliverable per teacher). Refactoring now would violate the "don't fix it yet"
+  instruction (dev-actions Q4) and would also be scope creep for THIS task.
+- The weapon system PLUGS INTO the existing input hook (`Attack.IsPressed()`)
+  without changing it — the input code stays exactly as the template wrote it.
+
+## 6. File layout (where each new/changed file lives)
+
+```
+NEW:
+  Assets/Scripts/ScriptableObjects/SOWeaponSpecs.cs    (ScriptableObject)
+  Assets/Scripts/Logic/Weapon.cs                        (plain C#)
+CHANGED (add members, do NOT rewrite):
+  Assets/Scripts/GameObjects/Bullet.cs                  (+Damage, +Init, +OnCollision)
+  Assets/Scripts/PlayerController.cs                    (+weapon, +firing, +test hooks)
+NEW (Unity assets):
+  Assets/ScriptableObjects/Weapons/MachineGunWeaponSpecs.asset
+  Assets/ScriptableObjects/Weapons/EnergyRingWeaponSpecs.asset
+  Assets/Prefabs/PlayerBullet_MG.prefab
+  Assets/Prefabs/PlayerBullet_Ling.prefab
+UNCHANGED (for this task):
+  Assets/Scripts/ApplicationController.cs               (test-spawn from Task 2 still works)
+  Assets/Scripts/GameObjects/Enemy*.cs                  (receive damage via Task 1 API)
+```
+
+## 7. The full firing chain (end-to-end walkthrough)
+
+1. **Input**: `controls.Player.Attack.IsPressed()` becomes true (template hook,
+   unchanged).
+2. **Gate**: `FireAtInterval()` checks `fireTimer <= 0f`. If yes, continue; else
+   ignore (this is the fire-rate limit — 0.2s for MG, 0.35s for EnergyRing).
+3. **Audio**: `AudioController.Instance.PlaySoundEffect(currentWeapon.
+   ShootAudioClip)` — the player REPORTS "I fired", the audio controller PLAYS
+   (§2.7). If the clip is null, skip silently (no crash on missing asset).
+4. **Spawn**: `Instantiate<Bullet>(currentWeapon.BulletPrefab)` — typed
+   instantiation (§2.3). The prefab's Bullet script's `Awake()` runs (caches
+   spawnOrigin — Task 2), then `OnEnable`, then our next line.
+5. **Damage**: `b.Init(currentWeapon.CurrentDamage)` — the level-scaled damage
+   (e.g. MG level 3 = 12, from `damagePerLevel[2]`). This is the "Init/Spawn
+   -metodin kautta" line from the brief.
+6. **Position**: `b.transform.position = transform.position` — spawn at the ship.
+7. **Flight** (Task 2): each frame, Bullet.Update() calls
+   `MovementPatterns.GetPosition(movementParameters, elapsed, spawnOrigin)` —
+   the bullet flies up at Speed units/s.
+8. **Hit**: bullet overlaps enemy's collider → Unity calls `OnTriggerEnter2D`
+   on BOTH (bullet + enemy) → Task 1's base adapter runs on the BULLET side:
+   resolves `other` as SpaceObject, checks IsActive guard, calls
+   `Bullet.OnCollision(other)`.
+9. **Damage dealt**: `if (other is IDamageable d) d.TakeDamage(Damage)` — the
+   enemy's Task 1 `TakeDamage` reduces its health; if health ≤ 0, the enemy
+   `Deactivate()` + `Despawn()`s (Task 1 behavior).
+10. **Bullet spent**: `Bullet.OnCollision` then calls `Despawn()` (Task 1
+    removal ritual: Deactivate → Object.Destroy). The bullet is gone.
+
+**Why this chain works without any new "collision manager" or "damage system":**
+every step is an OBJECT acting on ITSELF (bullet despawns itself, enemy reduces
+its own health) or reading another object's PUBLIC API (`TakeDamage`, `Damage`).
+No global registry, no event bus, no singleton DamageManager — §2.7 separation
+is airtight, and adding a new damageable type later (e.g. a destructible obstacle)
+just means implementing `IDamageable` — zero changes to Bullet.
+
+## 8. Rule-compliance checklist (verify at step B7)
+
+**§2.1 fixed controllers keep names** — ✅ PlayerController is MODIFIED in place
+(gain weapon members); no rename, no new controller. Weapon is NOT a controller
+(it's a POCO state holder) — it does not steal PlayerController's duties.
+
+**§2.2 one script per object** — ✅ Each bullet prefab carries exactly ONE
+Bullet script. The player ship carries exactly ONE PlayerController. No
+WeaponComponent, no FiringComponent, no DamageComponent stacked on any object.
+
+**§2.3 types not tags** — ✅ `Instantiate<Bullet>(...)` is typed;
+`if (other is IDamageable)` is a type check; no `CompareTag`, no tag strings.
+
+**§2.4 MonoBehaviour only when necessary** — ✅ Weapon is plain C# (no
+MonoBehaviour). SOWeaponSpecs is a ScriptableObject (data — not MonoBehaviour).
+Bullet + PlayerController ARE MonoBehaviours (they need Update/Awake — justified).
+
+**§2.5 scene independence** — ✅ No scene lookups. The player reads its own
+`defaultWeapon` SO; the bullet prefab is referenced by the SO; all objects are
+instantiated at runtime. Boot from any scene works.
+
+**§2.6 no repeated reference fetching** — ✅ `currentWeapon` cached in Start;
+`damage` cached in Init; no GetComponent/Find in any per-frame path.
+
+**§2.7 separation of responsibilities** — ✅ Weapon STATE in Weapon; weapon DATA
+in SOWeaponSpecs; FIRING TIMING in PlayerController; AUDIO in AudioController;
+DAMAGE DEALING in Bullet; DAMAGE RECEIVING in Enemy (via IDamageable). No class
+does two jobs.
+
+**§2.8 minimize Inspector** — ✅ All weapon tuning (damage table, fireInterval,
+maxLevel, bullet prefab, audio clip) lives in SOWeaponSpecs assets. The only
+[SerializeField] on the player is `defaultWeapon` (a justified one-time SO
+reference) + the existing `moveSpeed` (template). No per-weapon code branches.
+
+## 9. What NOT to build in this task (strict — do NOT implement these now)
+
+- ❌ Collectable/power-up drops (weapon switch via pickup is a LATER task).
+- ❌ UI HUD for weapon name/level (the `Level` property is exposed for it, but
+  the UI itself is a later task).
+- ❌ Enemy firing (enemies have `Fire()` virtual from Task 1 but NO
+  implementation — that's a later task when enemies get their own weapon SOs).
+- ❌ A 3rd weapon type (brief says "parille eri aseelle" = TWO for now).
+- ❌ Object pooling for bullets (Destroy is fine for now; pooling is an
+  optimization, not a requirement).
+- ❌ InputController (later course deliverable per teacher).
+- ❌ Audio refactor (PlayerController still calls AudioController directly —
+  template issue, flagged in Task 1, not fixed here).
+- ❌ A "DamageManager" singleton or event bus (the type-check pattern is enough).
+
+## 10. Acceptance criteria (the "strict criteria" — all must be true)
+
+1. `SOWeaponSpecs` compiles as a ScriptableObject with `[CreateAssetMenu]` and
+   `menuName = "Game/Weapon Specs"` (matches the reference screenshot).
+2. `Weapon` compiles as plain C# — NO MonoBehaviour, NO Transform, NO Time, NO
+   Find*/GetComponent (only value types + references to SO/AudioClip/Bullet —
+   the same accepted nuance as MovementPatterns using Vector2).
+3. `new Weapon(specs).Level` == 1; after 4× `IncreaseLevel()` == 5; after a 5th
+   `IncreaseLevel()` STAYS at 5 (clamped at MaxLevel).
+4. `new Weapon(specs).ResetLevel()` → `Level` == 1.
+5. `CurrentDamage` at level 1 == `damagePerLevel[0]`; at level 3 ==
+   `damagePerLevel[2]` (MG: 12, EnergyRing: 18 — per Q-T3-6 defaults).
+6. `PlayerController.Start()` sets `currentWeapon` to a non-null Weapon with
+   `Name` == the spec's weaponName (console log it for the test).
+7. In Play Mode: holding `Attack` fires bullets at the spec's fireInterval
+   (MG: 5 shots/sec, EnergyRing: ~2.9 shots/sec) — count 5 seconds of firing and
+   verify the rate.
+8. Each bullet spawns at the ship's position and flies UP per its SO (Task 2
+   movement works — bullet prefab's SOMovementParameters is assigned).
+9. A bullet hitting EnemyGreenSlime reduces the enemy's health (console log the
+   hit + remaining health); at 0 health the enemy Despawn()s (object gone).
+10. Switching to EnergyRing (via `SetWeapon` test hook) → next bullet uses the
+    PlayerBullet_Ling prefab (different sprite) AND has the EnergyRing's
+    CurrentDamage (console log `b.Damage` right after Init).
+11. `TestLevelUp()` × 2 on EnergyRing → `CurrentDamage` goes 8 → 12 → 18 (the
+    per-level table is being read correctly).
+12. Console CLEAN over a 30s Play session (no red, no yellow, no per-frame
+    warnings) with both weapons firing + enemies spawning/dying.
+13. Build from a BLANK scene runs with zero errors (§2.5) — the player only
+    appears when ApplicationController spawns it (existing Task 1/2 behavior).
+14. All assets exist: 2 SOWeaponSpecs + 2 bullet prefabs + 2 SOMovementParameters
+    (for the bullets) + the PlayersShip prefab has `defaultWeapon` assigned (no
+    "Missing (SOWeaponSpecs)" in the Inspector).
