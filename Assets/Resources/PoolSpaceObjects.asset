@@ -35,3 +35,13 @@ MonoBehaviour:
     initialSize: 10
   - prefab: {fileID: 3911284158991931837, guid: 365f3ab1d430f6a4aa80fe7ee8276876, type: 3}
     initialSize: 10
+  - prefab: {fileID: 6352324040285413790, guid: 9b2d2843a9df6a04eacb68fcc619a7a2, type: 3}
+    initialSize: 5
+  - prefab: {fileID: 6352324040285413790, guid: e5ef4a854c1361f479da552aef492367, type: 3}
+    initialSize: 5
+  - prefab: {fileID: 6352324040285413790, guid: cc47555fa32e3b8419d796cd28d0cd0b, type: 3}
+    initialSize: 5
+  - prefab: {fileID: 6352324040285413790, guid: 1492315c74e0a814b91ce3e6c53891fe, type: 3}
+    initialSize: 5
+  - prefab: {fileID: 6352324040285413790, guid: 646bcb81553d30646b5cca4744ca23eb, type: 3}
+    initialSize: 5

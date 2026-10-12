@@ -478,6 +478,14 @@ MonoBehaviour:
   vulturePrefab: {fileID: 8880836593133381193, guid: 2edcbd04a60f43240bd59cfbb2682a23, type: 3}
   falconPrefab: {fileID: 8880836593133381193, guid: 033e66d8ada6179409e0efc70d53c08f, type: 3}
   testDummyPrefab: {fileID: 0}
+  testCollectablePrefabs:
+  - {fileID: 6352324040285413790, guid: e5ef4a854c1361f479da552aef492367, type: 3}
+  - {fileID: 6352324040285413790, guid: 9b2d2843a9df6a04eacb68fcc619a7a2, type: 3}
+  - {fileID: 6352324040285413790, guid: cc47555fa32e3b8419d796cd28d0cd0b, type: 3}
+  - {fileID: 6352324040285413790, guid: 1492315c74e0a814b91ce3e6c53891fe, type: 3}
+  - {fileID: 6352324040285413790, guid: 646bcb81553d30646b5cca4744ca23eb, type: 3}
+  collectableSpawnPosition: {x: 0, y: 2.5}
+  collectableSpacing: 1.5
   debugText: {fileID: 0}
   vultureSpawnPosition: {x: -2, y: 4}
   falconSpawnPosition: {x: 2, y: 4}
