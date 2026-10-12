@@ -6,10 +6,10 @@
 /// the proof that the interface approach (instead of a TakeDamage in the base
 /// class) was the right call — SpaceObject stays clean of damage members.
 ///
-/// Scrolling motion + "bullet hits obstacle → bullet despawns" behavior are
-/// wired through the bullet's own handler (the bullet sees an Obstacle, is not
-/// IDamageable, and simply spends itself). Obstacle-specific motion arrives
-/// with the scrolling-hazards task.
+/// Scrolling motion + "bullet hits obstacle → bullet despawns" behavior is
+/// wired through the bullet's own handler (the bullet sees an Obstacle, it is
+/// not IDamageable, and simply passes through). Obstacle-specific motion
+/// arrives with the scrolling-hazards feature.
 /// </summary>
 public class Obstacle : SpaceObject
 {

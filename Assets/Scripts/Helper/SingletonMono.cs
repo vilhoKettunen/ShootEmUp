@@ -1,11 +1,23 @@
 ﻿using UnityEngine;
 
+/// <summary>
+/// Generic MonoBehaviour singleton. Guarantees exactly ONE instance of T
+/// exists at runtime:
+///   - If one is already in the scene, use it.
+///   - If none exists, create a new GameObject with T, name it, and mark it
+///     DontDestroyOnLoad so it survives scene transitions.
+///   - If more than one is found, log an error (should never happen).
+/// </summary>
 public class SingletonMono<T> : MonoBehaviour where T : MonoBehaviour
 {
     private static T _instance;
 
     private static object _lock = new object();
 
+    /// <summary>
+    /// Thread-safe accessor to the singleton instance. Creates it on first
+    /// access if it doesn't exist yet.
+    /// </summary>
     public static T Instance
     {
         get

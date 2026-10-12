@@ -1,18 +1,17 @@
 ﻿using UnityEngine;
 
 /// <summary>
-/// TEST-ONLY enemy (Q-T3-4): a stationary target that is IMMORTAL — it never
-/// dies at 0 HP — and reports its current HP to the HUD (UiViewHud) so damage
-/// values are visible while testing weapons/levels.
+/// TEST-ONLY enemy: a stationary target that is IMMORTAL — it never dies at
+/// 0 HP — and reports its current HP to the HUD (UiViewHud) so damage values
+/// are visible while testing weapons/levels.
 ///
 /// It extends Enemy so it is a fully regular target for bullets (IDamageable,
-/// collision plumbing) — but overrides the death rule: TakeDamage clamps HP at
-/// 0 and never dies / despawns. Remove this class (and its prefab) when the
-/// real enemy roster replaces the test enemies.
+/// collision plumbing) — but overrides the normal death behavior: TakeDamage
+/// clamps HP at 0 and the dummy never dies / despawns. Remove this class (and
+/// its prefab) when the real enemy roster replaces the test enemies.
 ///
-/// (Task 5) Also overrides Die() to a no-op (the dummy is immortal) and
-/// implements the pool Init/ResetObject hooks so it can be pooled like the
-/// other enemies.
+/// Also overrides Die() to a no-op (the dummy is immortal) and implements the
+/// pool Init/ResetObject hooks so it can be pooled like the other enemies.
 /// </summary>
 public class TestDummy : Enemy
 {
@@ -35,9 +34,9 @@ public class TestDummy : Enemy
     }
 
     /// <summary>
-    /// (Task 5) The dummy is IMMORTAL — Die() should not set IsAlive=false
-    /// (that would stop it reacting to further hits, which breaks the
-    /// "immortal target" test purpose). We just log and keep going.
+    /// The dummy is IMMORTAL — Die() should not set IsAlive=false (that would
+    /// stop it reacting to further hits, which breaks the "immortal target"
+    /// test purpose). We just log and keep going.
     /// </summary>
     public override void Die()
     {
@@ -45,7 +44,7 @@ public class TestDummy : Enemy
         Debug.Log("[TestDummy] Die() called — but the dummy is IMMORTAL, staying in place.");
     }
 
-    /// <summary>(Task 4) Pool Init — reset HP to 100.</summary>
+    /// <summary>Pool Init — reset HP to 100.</summary>
     public override void Init()
     {
         base.Init();
@@ -53,33 +52,29 @@ public class TestDummy : Enemy
         UiViewHud.Instance?.UpdateHealth(currentHealth);
     }
 
-    /// <summary>(Task 4) Pool ResetObject — reset HP to 100.</summary>
+    /// <summary>Pool ResetObject — reset HP to 100.</summary>
     public override void ResetObject()
     {
         currentHealth = StartHealth;
         base.ResetObject();
     }
 
-    /// <summary>Stationary: the dummy never moves (Q-T3-4).</summary>
+    /// <summary>Stationary: the dummy never moves.</summary>
     protected override void Move()
     {
     }
 
-    /// <summary>(Task 5) The dummy never fires.</summary>
+    /// <summary>The dummy never fires.</summary>
     public override void StartFiring()
     {
         // No-op: the dummy is a stationary target.
     }
 
-    /// <summary>(Task 5) The dummy never fires.</summary>
+    /// <summary>The dummy never fires.</summary>
     public override void Shoot()
     {
         // No-op: the dummy is a stationary target.
     }
 
-    private void Awake()
-    {
-        currentHealth = StartHealth;
-        UiViewHud.Instance?.UpdateHealth(currentHealth);
-    }
+    
 }

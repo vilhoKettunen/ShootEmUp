@@ -2,20 +2,19 @@
 using UnityEngine;
 
 /// <summary>
-/// (Task 4) Fully dynamic, generic object pool — PLAIN C# (rule 2.4: NO
-/// MonoBehaviour, no Unity lifecycle). Keyed by the SpaceObject PREFAB as a
-/// GameObject — which is what the Inspector shows you when you pick a prefab
-/// (this is also the same shape as every other prefab field in the project,
-/// e.g. Weapon.BulletPrefab).
+/// Fully dynamic, generic object pool — PLAIN C# (NO MonoBehaviour, no Unity
+/// lifecycle). Keyed by the SpaceObject PREFAB as a GameObject — which is
+/// what the Inspector shows you when you pick a prefab (the same shape as
+/// every other prefab field in the project, e.g. Weapon.BulletPrefab).
 ///
-/// Two dictionaries, exactly as the brief's diagram:
+/// Two dictionaries:
 ///   pools         : Dictionary&lt;GameObject, Queue&lt;SpaceObject&gt;&gt;  (prefab -> its queue)
 ///   objectPrefabs : Dictionary&lt;SpaceObject, GameObject&gt;          (instance -> prefab)
 ///
 /// The concrete SpaceObject component (Bullet / Enemy / Collectable / ...) is
 /// resolved ONCE on the prefab's ROOT at Register/Get time — the pool never
 /// hard-codes a concrete type, so a new poolable type still needs ZERO C#
-/// changes (rule 2.8).
+/// changes.
 ///
 /// Register(prefab) pre-fills the queue with `initialSize` inactive instances.
 /// Get&lt;T&gt;(prefab)  dequeues from the front (or instantiates one if empty),
@@ -31,7 +30,10 @@ public class ObjectPool
     private readonly Dictionary<GameObject, Queue<SpaceObject>> pools = new Dictionary<GameObject, Queue<SpaceObject>>();
     private readonly Dictionary<SpaceObject, GameObject> objectPrefabs = new Dictionary<SpaceObject, GameObject>();
 
-    /// <summary>Pre-fill a pool for one prefab (called once per SOPoolSpaceObjects entry).</summary>
+    /// <summary>
+    /// Pre-fill a pool for one prefab (called once per SOPoolSpaceObjects
+    /// entry). Instantiates `initialSize` inactive instances and enqueues them.
+    /// </summary>
     public void Register(GameObject prefab, int initialSize = 10)
     {
         if (prefab == null) return;
@@ -121,7 +123,10 @@ public class ObjectPool
         return typed;
     }
 
-    /// <summary>Recycle an instance back to its pool (reset + deactivate + enqueue to the back).</summary>
+    /// <summary>
+    /// Recycle an instance back to its pool (reset + deactivate + enqueue to
+    /// the back).
+    /// </summary>
     public void Return<T>(T obj) where T : SpaceObject
     {
         if (obj == null) return;

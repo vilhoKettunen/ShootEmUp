@@ -3,20 +3,19 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// The player ship — MODIFIED IN PLACE (rule 2.1: name + file kept), now a
-/// SpaceObject (Task 1) with the weapon system wired in (Task 3).
+/// The player ship. A SpaceObject that can be damaged, and that owns the
+/// weapon state + firing timing for the player.
 ///
-/// Responsibilities (kept separated):
-///   - INPUT: move + fire (template pattern — flagged for the later
-///     InputController refactor, NOT fixed in this task).
-///   - WEAPON STATE: current weapon (SOWeaponSpecs) + the GLOBAL level
-///     (Q-T3-4: level persists across weapon switches).
-///   - FIRING TIMING: fireRate/fireInterval is THE PLAYER'S responsibility
-///     (teacher's brief) — the fireTimer lives here; the Weapon only supplies
-///     the interval number.
-///   - OWN HIT RESPONSE: TakeDamage (IDamageable) + Collect (Collectable hook).
+/// Responsibilities (kept separated on purpose):
+///   - INPUT: move + fire (reads the new Input System actions).
+///   - WEAPON STATE: the current weapon (SOWeaponSpecs) + a GLOBAL weapon
+///     level that persists across weapon switches.
+///   - FIRING TIMING: the player owns the fire timer — the weapon data asset
+///     only supplies the interval number.
+///   - OWN HIT RESPONSE: TakeDamage (via IDamageable) + Collect (collectable
+///     hook) + OnCollision (what touching each object type means for the player).
 ///
-/// TEST HOOKS (Q-T3-4/Q-T3-5, removable later — see documentation):
+/// Test hooks (removable later):
 ///   [1..5]  switch weapon (by index in the WeaponSpecs list)
 ///   E       level up    Q       level down
 /// </summary>
@@ -25,26 +24,26 @@ public class PlayerController : SpaceObject, IDamageable
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 8f;
 
-    [Header("Weapon (Task 3)")]
+    [Header("Weapon")]
     [Tooltip("The weapon the player starts with (e.g. MachineGunWeaponSpecs).")]
     [SerializeField] private SOWeaponSpecs defaultWeapon;
     [Tooltip("All weapon types the player can switch between (test hook: [1..5]).")]
     [SerializeField] private List<SOWeaponSpecs> weaponSpecs = new List<SOWeaponSpecs>();
 
-    [Header("Health (Task 5)")]
-    [Tooltip("Player hit points. At 0 the player dies (Die). Lives / respawn are a LATER task (Q-T5-4).")]
+    [Header("Health")]
+    [Tooltip("Player hit points. At 0 the player dies (Die). Lives / respawn are a later feature.")]
     [SerializeField] private int startHitPoints = 100;
 
     private int hitPoints;
 
-    /// <summary>(Task 5) Current hit points. Read-only from outside.</summary>
+    /// <summary>Current hit points. Read-only from outside.</summary>
     public int HitPoints => hitPoints;
 
     private InputSystem_Actions controls;
     private Vector2 moveInput;
 
     private Weapon currentWeapon;
-    private int currentLevel = Weapon.MinLevel; // GLOBAL level — persists across weapon switches (Q-T3-4)
+    private int currentLevel = Weapon.MinLevel; // GLOBAL level — persists across weapon switches
     private float fireTimer;
     private bool isFiringHeld; // true while the fire key is held down (performed..canceled)
 
@@ -56,9 +55,13 @@ public class PlayerController : SpaceObject, IDamageable
 
     #region Unity lifecycle
 
+    /// <summary>
+    /// One-time setup: seeds HP from the prefab's default, wires the input
+    /// actions (move + held-fire) and initializes the starting weapon.
+    /// </summary>
     private void Awake()
     {
-        hitPoints = startHitPoints; // (Task 5) seed HP from the prefab's default
+        hitPoints = startHitPoints; // seed HP from the prefab's default
 
         controls = new InputSystem_Actions();
 
@@ -76,16 +79,24 @@ public class PlayerController : SpaceObject, IDamageable
         InitializeWeapon();
     }
 
+    /// <summary>Activates the input actions when the player becomes active.</summary>
     private void OnEnable()
     {
         controls.Enable();
     }
 
+    /// <summary>Deactivates the input actions when the player becomes inactive.</summary>
     private void OnDisable()
     {
         controls.Disable();
     }
 
+    /// <summary>
+    /// Per-frame update:
+    ///   1. Move the ship by the current input * speed * frame time.
+    ///   2. While the fire key is held, try to fire (gated by the cooldown).
+    ///   3. Handle the test keyboard hooks (weapon switch / level change).
+    /// </summary>
     private void Update()
     {
         Vector3 movement = new Vector3(moveInput.x, moveInput.y, 0f);
@@ -107,10 +118,10 @@ public class PlayerController : SpaceObject, IDamageable
     #region Firing (fireRate is the player's responsibility)
 
     /// <summary>
-    /// Fire-rate gate: the player owns the timer (brief), the weapon only
-    /// supplies the interval number. Called on the first press AND every frame
-    /// while the fire key is held — the fireTimer cooldown is what keeps the
-    /// rate from exceeding the weapon's interval.
+    /// Fire-rate gate: the player owns the timer, the weapon only supplies the
+    /// interval number. Called on the first press AND every frame while the
+    /// fire key is held — the fireTimer cooldown is what keeps the rate from
+    /// exceeding the weapon's interval.
     /// </summary>
     private void FireAtInterval()
     {
@@ -130,14 +141,12 @@ public class PlayerController : SpaceObject, IDamageable
     }
 
     /// <summary>
-    /// (Task 4 + Task 5) Fire ONE bullet from the current weapon.
-    ///
-    /// Task 4 bridge (code-changes §6.1): the weapon's bullet prefab is a
-    /// GameObject; we resolve it to its Bullet COMPONENT, then ask the pool for
-    /// a ready Bullet (Get dequeues a pooled instance or grows the pool).
-    ///
-    /// Task 5: SetOwnerAndDamage(this, currentLevelDamage) — the bullet's OWNER
-    /// is the player, which is what makes it a "player bullet" (rule 2.3).
+    /// Fire ONE bullet from the current weapon:
+    ///   1. Resolve the weapon's bullet prefab to a pooled Bullet component.
+    ///   2. Place it at the weapon's spawn offset from the player.
+    ///   3. Mark the player as the bullet's OWNER + set the current level's
+    ///      damage — the owner is what makes it a "player bullet".
+    ///   4. Play the weapon's shoot sound.
     /// </summary>
     private void FireCurrentWeapon()
     {
@@ -147,7 +156,7 @@ public class PlayerController : SpaceObject, IDamageable
             return;
         }
 
-        // Get a ready bullet from the pool (Task 4 — the pool keys on the GameObject
+        // Get a ready bullet from the pool (the pool keys on the GameObject
         // prefab and resolves the ROOT Bullet component internally).
         Bullet b = ApplicationController.Instance.ObjectPool.Get<Bullet>(currentWeapon.BulletPrefab);
         if (b == null)
@@ -160,7 +169,7 @@ public class PlayerController : SpaceObject, IDamageable
         // the spawner is responsible for placing it).
         b.transform.position = transform.position + new Vector3(currentWeapon.SpawnOffset.x, currentWeapon.SpawnOffset.y, 0f);
 
-        // (Task 5) Set owner = player + damage = the current level's damage.
+        // Set owner = player + damage = the current level's damage.
         // SetOwnerAndDamage RETURNS this so it could chain after Get; we use it
         // as a statement here for readability.
         b.SetOwnerAndDamage(this, currentWeapon.CurrentDamage);
@@ -173,8 +182,11 @@ public class PlayerController : SpaceObject, IDamageable
 
     #endregion
 
-    #region Weapon state + switching (Q-T3-4: global level)
+    #region Weapon state + switching (global level)
 
+    /// <summary>
+    /// Sets up the player's starting weapon (the defaultWeapon asset).
+    /// </summary>
     private void InitializeWeapon()
     {
         if (defaultWeapon == null)
@@ -188,7 +200,7 @@ public class PlayerController : SpaceObject, IDamageable
 
     /// <summary>
     /// Switches the player's weapon and KEEPS the player's global level
-    /// (clamped to the new weapon's max).
+    /// (clamped to the new weapon's max). Updates the HUD.
     /// </summary>
     public void SetWeapon(SOWeaponSpecs specs)
     {
@@ -216,6 +228,10 @@ public class PlayerController : SpaceObject, IDamageable
         SetLevel(currentLevel - 1);
     }
 
+    /// <summary>
+    /// Changes the player's global weapon level (clamped to the weapon's
+    /// range) and rebuilds the current Weapon at the new level. Updates the HUD.
+    /// </summary>
     private void SetLevel(int newLevel)
     {
         if (currentWeapon == null)
@@ -229,7 +245,13 @@ public class PlayerController : SpaceObject, IDamageable
         UiViewHud.Instance?.UpdateLevel(currentLevel);
     }
 
-    /// <summary>Test hook (Q-T3-4): cycle to weapon N (1-based) from the WeaponSpecs list.</summary>
+    /// <summary>
+    /// Test hook: switch weapons / change level from the keyboard.
+    ///   [1..5] → weapon index 0..4 (edge-triggered: fires once per press,
+    ///            not every frame while held; guarded so a short list is safe)
+    ///   E      → level up
+    ///   Q      → level down
+    /// </summary>
     private void HandleTestHooks()
     {
         if (weaponSpecs.Count == 0)
@@ -242,8 +264,6 @@ public class PlayerController : SpaceObject, IDamageable
             return;
         }
 
-        // [1..5] → weapon index 0..4 (edge-triggered: fires once per press,
-        // not every frame while held; guard each so a short list is safe)
         if (weaponSpecs.Count > 0 && Keyboard.current.digit1Key.wasPressedThisFrame) SetWeapon(weaponSpecs[0]);
         if (weaponSpecs.Count > 1 && Keyboard.current.digit2Key.wasPressedThisFrame) SetWeapon(weaponSpecs[1]);
         if (weaponSpecs.Count > 2 && Keyboard.current.digit3Key.wasPressedThisFrame) SetWeapon(weaponSpecs[2]);
@@ -262,11 +282,11 @@ public class PlayerController : SpaceObject, IDamageable
 
     #endregion
 
-    #region SpaceObject / IDamageable / Collectable hooks (Task 1)
+    #region SpaceObject / IDamageable / Collectable hooks
 
     /// <summary>
-    /// (Task 5) The player's own hit response: reduce HP, log, and at 0 HP
-    /// call Die(). Lives / respawn / invulnerability are LATER tasks (Q-T5-4).
+    /// The player's own hit response: reduce HP, log, update the HUD, and at
+    /// 0 HP call Die(). Lives / respawn / invulnerability are a later feature.
     /// </summary>
     public void TakeDamage(int amount)
     {
@@ -283,36 +303,56 @@ public class PlayerController : SpaceObject, IDamageable
     }
 
     /// <summary>
-    /// (Task 5 Q-T5-4) The player's death ritual. "Test-only" for now: log a
-    /// clear message and mark the player dead. Lives / respawn / invulnerability
-    /// are LATER tasks — the Die() hook is the extension point.
+    /// The player's death ritual. "Test-only" for now: log a clear message and
+    /// mark the player dead. Lives / respawn / invulnerability are a later
+    /// feature — the Die() hook is the extension point.
     /// </summary>
     public override void Die()
     {
         base.Die(); // sets IsAlive = false + logs
         Debug.Log("[Player] Player has died.");
-        // Later task: respawn / game-over UI / input stop.
+        // Later: respawn / game-over UI / input stop.
     }
 
     /// <summary>
-    /// (Task 5 Q-T5-4) Collectable hook — the player owns the "what do I gain"
-    /// logic (separation of responsibilities). The collectable points the
-    /// player at itself; the PLAYER logs what it gained (and, later, applies
-    /// the payload — weapon switch / level up). The collectable's own
-    /// Collect() handles its own pool Return, so this method does NOT call
-    /// back into it (that would double-Return).
+    /// Collectable hook — the player owns the "what do I gain" logic
+    /// (separation of responsibilities). The collectable points the player at
+    /// itself; the player logs what it gained (and, later, applies the payload
+    /// — weapon switch / level up). The collectable's own Collect() handles its
+    /// own pool Return, so this method does NOT call back into it (that would
+    /// double-Return).
+    ///
+    /// For a WeaponPickup specifically, this method logs the PLAYER's
+    /// perspective: "I currently have weapon X at level Y, and I just picked
+    /// up Z." The detailed outcome (level-up vs. switch) is logged by the
+    /// WeaponPickup's own Collect(). Together the two logs give a complete
+    /// picture.
     /// </summary>
     public void Collect(Collectable collectable)
     {
         Debug.Log("[Player] Picked up collectable: " + collectable.GetType().Name
             + " (payload: " + collectable.PayloadDescription + ")");
-        // Later task: apply the collectable's payload (weapon switch / level up).
+
+        // Extra context for weapon pickups: log the player's current weapon
+        // state so the log reader can see the before/after.
+        if (collectable is WeaponPickup pickup)
+        {
+            Debug.Log("[Player] My current weapon: "
+                + (CurrentWeapon != null ? CurrentWeapon.Name + " Lv." + CurrentLevel : "NONE")
+                + " → picked up: "
+                + (pickup.WeaponSpecs != null ? pickup.WeaponSpecs.WeaponName : "unknown"));
+        }
+
+        // Later: apply the collectable's payload (weapon switch / level up).
+        // For a WeaponPickup this would be:
+        //   if same weapon  → IncreaseLevel()
+        //   if different    → SetWeapon(pickup.WeaponSpecs)  (level is kept)
     }
 
     /// <summary>
-    /// (Task 5) What it means for the PLAYER to touch something:
-    ///   Enemy       → player takes damage (Q-T5-5: placeholder 1 for now)
-    ///   Obstacle    → player takes damage (Q-T5-5: placeholder 1 for now)
+    /// What it means for the PLAYER to touch something:
+    ///   Enemy       → player takes contact damage (placeholder value for now).
+    ///   Obstacle    → player takes contact damage (placeholder value for now).
     ///   Collectable → the COLLECTABLE handles its own side (it calls
     ///                  player.Collect(this) for the gain log + pool Return).
     ///                  We do NOT react here — that would double-Return.
@@ -323,12 +363,12 @@ public class PlayerController : SpaceObject, IDamageable
     {
         if (other is Enemy)
         {
-            // Q-T5-5: placeholder contact damage (data-driven enemy stats = later task).
+            // Placeholder contact damage (data-driven enemy stats = later feature).
             TakeDamage(1);
         }
         else if (other is Obstacle)
         {
-            // Q-T5-5: placeholder contact damage.
+            // Placeholder contact damage.
             TakeDamage(1);
         }
         // Collectables + Bullets handle THEIR OWN side — they call our public
@@ -337,4 +377,3 @@ public class PlayerController : SpaceObject, IDamageable
 
     #endregion
 }
-

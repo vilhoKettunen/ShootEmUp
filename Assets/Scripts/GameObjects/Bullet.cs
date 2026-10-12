@@ -1,53 +1,52 @@
 ﻿using UnityEngine;
 
 /// <summary>
-/// A projectile fired by the player OR by an enemy — the SAME class for both
-/// (Task 5, brief: "Sama Bullet-luokka toimii sekä pelaajan että vihollisten
-/// ammuksille"). A bullet's identity is its DATA (owner + movement + damage),
-/// never a tag or a subclass (rule 2.3).
+/// A projectile fired by the player OR by an enemy — the SAME class for both.
+/// A bullet's identity is its DATA (owner + movement + damage), never a tag or
+/// a subclass.
 ///
-/// Extends SpaceObject (Task 1) and inherits the active state, the collision
-/// plumbing, the Despawn ritual, and the pool Init/ResetObject hooks (Task 4).
+/// Extends SpaceObject and inherits the active state, the collision plumbing,
+/// the Despawn ritual, and the pool Init/ResetObject hooks.
 ///
 /// Lifecycle:
-///   1. ObjectPool.Get<Bullet>(prefabComponent) dequeues a pooled instance,
-///      activates it and calls Bullet.Init() (no-arg, pool hook — Task 4).
-///      The prefab CARRIES its SOMovementParameters (Q-T4-1 option (a)).
+///   1. ObjectPool.Get&lt;Bullet&gt;(prefabComponent) dequeues a pooled instance,
+///      activates it and calls Bullet.Init() (no-arg, pool hook).
+///      The prefab CARRIES its SOMovementParameters.
 ///   2. The spawner calls SetOwnerAndDamage(owner, damage) — RETURNS this so
-///      it chains after Get (Task 5, brief: "Metodi palauttaa this").
+///      it chains after Get.
 ///   3. Update moves it via the pure MovementPatterns class (ONE line).
 ///   4. End of life, in either order:
-///        a. It touches ANY SpaceObject (enemy, player, obstacle, ...) →
-///           owner-based damage routing (Task 5) then pool.Return (Task 4).
-///        b. It leaves the camera view → pool.Return (Task 5 + CameraHelper).
+///        a. It touches ANY SpaceObject → owner-based damage routing then pool.Return.
+///        b. It leaves the camera view → pool.Return.
+///        c. Its movement duration elapses → pool.Return.
 /// </summary>
 public class Bullet : SpaceObject
 {
-    [Header("Movement (Task 4 Q-T4-1a: the prefab CARRIES its own movement)")]
+    [Header("Movement (the prefab CARRIES its own movement)")]
     [Tooltip("Movement identity for this bullet (pattern/direction/speed/duration). Serialized so pooled prefabs self-configure on Init().")]
     [SerializeField] private SOMovementParameters movementParameters;
 
-    [Header("Per-shot (set by SetOwnerAndDamage, Task 5)")]
+    [Header("Per-shot (set by SetOwnerAndDamage)")]
     [Tooltip("Damage this specific shot deals (overridden per shot by the shooter).")]
     [SerializeField] private int defaultDamage = 1;
 
     private Vector2 spawnOrigin;
     private float elapsed;
     private bool initialized;
-    private SpaceObject owner; // (Task 5) who fired this — PlayerController or an Enemy
+    private SpaceObject owner; // who fired this — PlayerController or an Enemy
 
-    /// <summary>Damage this specific shot deals. Set by SetOwnerAndDamage (Task 5).</summary>
+    /// <summary>Damage this specific shot deals. Set by SetOwnerAndDamage.</summary>
     public int Damage { get; private set; }
 
     /// <summary>The movement asset driving this bullet (read for logging/tests).</summary>
     public SOMovementParameters MovementParameters => movementParameters;
 
-    /// <summary>(Task 5) Who fired this bullet (PlayerController or an Enemy).</summary>
+    /// <summary>Who fired this bullet (PlayerController or an Enemy).</summary>
     public SpaceObject Owner => owner;
 
     /// <summary>
-    /// (Task 5) Set owner + damage. RETURNS this so it chains after a pool Get:
-    ///   Bullet b = pool.Get<Bullet>(proto);
+    /// Set owner + damage. RETURNS this so it chains after a pool Get:
+    ///   Bullet b = pool.Get&lt;Bullet&gt;(proto);
     ///   b.transform.position = desiredSpawnPos;
     ///   b.SetOwnerAndDamage(shooter, damage);   // caches spawnOrigin HERE
     ///
@@ -64,11 +63,11 @@ public class Bullet : SpaceObject
     }
 
     /// <summary>
-    /// (Task 4) Pool "Get" hook — make this bullet ready for use.
+    /// Pool "Get" hook — make this bullet ready for use.
     /// Resets the elapsed timer, caches a DEFAULT spawnOrigin (= current
     /// transform.position, which the spawner may overwrite right after Get),
     /// and flags the bullet initialized. Reads its OWN serialized
-    /// movementParameters (Q-T4-1a: the prefab carries its config).
+    /// movementParameters (the prefab carries its config).
     ///
     /// If the spawner calls SetOwnerAndDamage AFTER setting position (the
     /// standard flow), SetOwnerAndDamage RE-CACHES spawnOrigin to the final
@@ -89,9 +88,9 @@ public class Bullet : SpaceObject
     }
 
     /// <summary>
-    /// (Task 4) Pool "Return" hook — stop + reset per-object state.
-    /// Clears the owner (Task 5) so a recycled bullet never accidentally
-    /// keeps its previous shooter's identity.
+    /// Pool "Return" hook — stop + reset per-object state.
+    /// Clears the owner so a recycled bullet never accidentally keeps its
+    /// previous shooter's identity.
     /// </summary>
     public override void ResetObject()
     {
@@ -103,10 +102,10 @@ public class Bullet : SpaceObject
     }
 
     /// <summary>
-    /// (Task 5) Owner-based hit routing:
+    /// Owner-based hit routing:
     ///   player's bullet  -> damages any IDamageable that is NOT the player (friendly-fire guard)
     ///   enemy's bullet   -> damages the player only
-    /// After ANY hit the bullet is spent and RETURNED TO THE POOL (Task 4).
+    /// After ANY valid hit the bullet is spent and RETURNED TO THE POOL.
     /// </summary>
     protected override void OnCollision(SpaceObject other)
     {
@@ -142,6 +141,13 @@ public class Bullet : SpaceObject
         }
     }
 
+    /// <summary>
+    /// Per-frame movement + end-of-life check:
+    ///   1. Advance the elapsed time.
+    ///   2. Move via the pure MovementPatterns class (one line).
+    ///   3. Recycle the bullet when it leaves the camera view, or when its
+    ///      movement duration has elapsed (whichever comes first).
+    /// </summary>
     private void Update()
     {
         if (!initialized || !IsActive) return;
@@ -153,16 +159,17 @@ public class Bullet : SpaceObject
         // ONE line of movement — the pure class knows HOW (Straight/Sine/Target/Eased).
         transform.position = MovementPatterns.GetPosition(movementParameters, elapsed, spawnOrigin);
 
-        // (Task 5) Recycle when the bullet leaves the camera view.
+        // Recycle when the bullet leaves the camera view.
         SpriteRenderer sr = GetComponent<SpriteRenderer>();
         if (sr != null && !CameraHelper.SpriteBoundsInCameraView(sr, Camera.main))
         {
             ApplicationController.Instance.ObjectPool.Return(this);
+            return;
         }
 
-        // Lifespan (Q-T2-3/Q-T3-3): 0 = forever; otherwise the bullet returns
-        // to the pool on its own even if it never hits anything.
-        else if (movementParameters.Duration > 0f && elapsed >= movementParameters.Duration)
+        // Lifespan: 0 = forever; otherwise the bullet returns to the pool on
+        // its own even if it never hits anything.
+        if (movementParameters.Duration > 0f && elapsed >= movementParameters.Duration)
         {
             ApplicationController.Instance.ObjectPool.Return(this);
         }

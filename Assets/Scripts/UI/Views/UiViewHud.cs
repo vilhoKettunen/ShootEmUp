@@ -2,14 +2,16 @@
 using TMPro;
 
 /// <summary>
-/// In-game HUD view (the test-phase HUD): shows the current weapon name, the
-/// player's weapon LEVEL, and the TestDummy's HP so damage values are visible
-/// while testing (Q-T3-4).
+/// In-game HUD view: shows the current weapon name, the player's weapon
+/// LEVEL, and the player's HP (or, during testing, the TestDummy's HP).
 ///
-/// It plugs into the template's UiView system: a Canvas + Text GameObject with
-/// this script, registered in the UI prefab's UiViewsList (LayerHUD), default
+/// It plugs into the UI view system: a Canvas + Text GameObject with this
+/// script, registered in the UI prefab's UiViewsList (LayerHUD), default
 /// state VISIBLE. Game code pushes strings in (UpdateWeapon/UpdateLevel/
 /// UpdateHealth) — the HUD never polls game objects.
+///
+/// Exposes a static Instance so game code can push updates without needing a
+/// reference to the UIController.
 /// </summary>
 public class UiViewHud : UiView
 {
@@ -54,7 +56,7 @@ public class UiViewHud : UiView
         }
     }
 
-    /// <summary>Push the player's HP into the HUD.</summary>
+    /// <summary>Push the current HP value into the HUD.</summary>
     public void UpdateHealth(int health)
     {
         if (healthText != null)

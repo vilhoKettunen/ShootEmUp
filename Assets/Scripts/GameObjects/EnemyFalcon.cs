@@ -1,22 +1,20 @@
 ﻿using UnityEngine;
 
 /// <summary>
-/// Enemy ship #2 (test roster — Task 2): a small FALCON fighter that moves
-/// down the screen with an EASED approach (its SOMovementParameters asset:
-/// pattern Eased). One of the 7 small enemy ships.
+/// Enemy ship: a small FALCON fighter that moves down the screen with an
+/// EASED approach (its SOMovementParameters asset: pattern Eased).
 ///
-/// (Task 4 Q-T4-1a) The prefab CARRIES its SOMovementParameters — the
-/// serialized field is the default. A spawner can still override it by
-/// calling Init(SOMovementParameters) after pool Get (the old Task 2 API).
+/// The prefab CARRIES its SOMovementParameters — the serialized field is the
+/// default. A spawner can still override it by calling
+/// Init(SOMovementParameters) after pool Get.
 ///
 /// Deliberately the SAME thin shape as EnemyVulture — the ONLY difference is
-/// which SOMovementParameters asset is on the prefab. That is the
-/// data-driven design working: behavior variation lives in DATA, not in code
-/// branches (rule 2.8).
+/// which SOMovementParameters asset is on the prefab. That is the data-driven
+/// design: behavior variation lives in DATA, not in code branches.
 /// </summary>
 public class EnemyFalcon : Enemy
 {
-    [Header("Movement (Task 4 Q-T4-1a: the prefab CARRIES its own movement SO)")]
+    [Header("Movement (the prefab CARRIES its own movement SO)")]
     [SerializeField] private SOMovementParameters movementParameters;
 
     private Vector2 spawnOrigin;
@@ -25,8 +23,8 @@ public class EnemyFalcon : Enemy
 
     /// <summary>
     /// (Optional) Spawner injection — overrides the prefab's serialized
-    /// movementParameters. Call AFTER pool Get if you want a different SO
-    /// than the prefab's default. (The old Task 2 API, kept for flexibility.)
+    /// movementParameters. Call AFTER pool Get if you want a different
+    /// movement asset than the prefab's default.
     /// </summary>
     public void Init(SOMovementParameters parameters)
     {
@@ -35,7 +33,7 @@ public class EnemyFalcon : Enemy
         initialized = movementParameters != null;
     }
 
-    /// <summary>(Task 4) Pool "Get" hook — re-arm movement state.</summary>
+    /// <summary>Pool "Get" hook — re-arm movement state.</summary>
     public override void Init()
     {
         base.Init();
@@ -48,7 +46,7 @@ public class EnemyFalcon : Enemy
         }
     }
 
-    /// <summary>(Task 4) Pool "Return" hook — reset movement state.</summary>
+    /// <summary>Pool "Return" hook — reset movement state.</summary>
     public override void ResetObject()
     {
         initialized = false;
@@ -65,6 +63,7 @@ public class EnemyFalcon : Enemy
         transform.position = MovementPatterns.GetPosition(movementParameters, elapsed, spawnOrigin);
     }
 
+    /// <summary>Per-frame: advance the movement.</summary>
     private void Update()
     {
         Move();

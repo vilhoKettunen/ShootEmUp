@@ -2,8 +2,9 @@
 using UnityEngine;
 
 /// <summary>
-/// (Task 4) One poolable prefab + how many to pre-instantiate.
-/// [Serializable] so it can be a row in SOPoolSpaceObjects and edited in the Inspector.
+/// One poolable prefab + how many to pre-instantiate.
+/// [Serializable] so it can be a row in SOPoolSpaceObjects and edited in the
+/// Inspector.
 ///
 /// The prefab field is a GAMEOBJECT reference (the actual prefab asset). The
 /// Inspector shows its normal "Pick Prefab" browser for this field — the

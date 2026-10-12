@@ -1,16 +1,16 @@
 ﻿using System;
 using UnityEngine; // Vector2 ONLY — a plain math struct (see header note)
 
-// PURE C# (rule 2.4): no MonoBehaviour, no GameObject, no Transform, no Time,
-// no Find*, no engine services. The only UnityEngine type touched is Vector2 —
-// a plain math struct, acceptable for this course (the reference SO uses it too).
-// Time is PASSED IN as a float → every function is a pure function of its
-// arguments: same input, same output, testable in any C# project.
+// PURE C#: no MonoBehaviour, no GameObject, no Transform, no Time, no Find*,
+// no engine services. The only UnityEngine type touched is Vector2 — a plain
+// math struct. Time is PASSED IN as a float → every function is a pure
+// function of its arguments: same input, same output, testable in any C#
+// project.
 
 /// <summary>
 /// Pure, stateless movement pattern math shared by enemies AND bullets.
-/// One implementation, zero duplication (rule 2.7): each object passes its
-/// OWN SOMovementParameters and an elapsed time; the class never knows which
+/// One implementation, zero duplication: each object passes its OWN
+/// SOMovementParameters and an elapsed time; the class never knows which
 /// object asked.
 ///
 /// Convention: Straight/Sine return a DELTA (offset to add to the origin);
@@ -18,10 +18,10 @@ using UnityEngine; // Vector2 ONLY — a plain math struct (see header note)
 /// GetPosition normalizes both conventions and ALWAYS returns an absolute
 /// position — objects call GetPosition and assign transform.position.
 ///
-/// The template's Kryzarel easing set (Assets/Scripts/Helper/EassingFunctions.cs,
-/// namespace Kryz.Tweening) is the approved utility for BUILDING future
-/// patterns (eased approaches, curved shots, boss moves) — see the Eased
-/// pattern below, which is the first consumer of that easing set.
+/// The Kryzarel easing set (Assets/Scripts/Helper/EassingFunctions.cs,
+/// namespace Kryz.Tweening) is the utility for BUILDING future patterns
+/// (eased approaches, curved shots, boss moves) — see the Eased pattern
+/// below, which is the first consumer of that easing set.
 /// </summary>
 public static class MovementPatterns
 {

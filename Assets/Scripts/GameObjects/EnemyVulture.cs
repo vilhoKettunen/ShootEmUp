@@ -1,21 +1,20 @@
 ﻿using UnityEngine;
 
 /// <summary>
-/// Enemy ship #1 (test roster — Task 2): a small VULTURE fighter that drifts
-/// down the screen with a SINE wiggle (its SOMovementParameters asset:
-/// pattern Sine). One of the 7 small enemy ships (kenney spaceShips_001..008).
+/// Enemy ship: a small VULTURE fighter that drifts down the screen with a
+/// SINE wiggle (its SOMovementParameters asset: pattern Sine).
 ///
-/// (Task 4 Q-T4-1a) The prefab CARRIES its SOMovementParameters — the
-/// serialized field is the default. A spawner can still override it by
-/// calling Init(SOMovementParameters) after pool Get (the old Task 2 API).
+/// The prefab CARRIES its SOMovementParameters — the serialized field is the
+/// default. A spawner can still override it by calling
+/// Init(SOMovementParameters) after pool Get.
 ///
 /// The class is THIN on purpose: all movement tuning lives in the
-/// SOMovementParameters asset (data-driven, rule 2.8), and the movement MATH
-/// lives in the pure MovementPatterns class (rule 2.4/2.7).
+/// SOMovementParameters asset (data-driven), and the movement MATH lives in
+/// the pure MovementPatterns class.
 /// </summary>
 public class EnemyVulture : Enemy
 {
-    [Header("Movement (Task 4 Q-T4-1a: the prefab CARRIES its own movement SO)")]
+    [Header("Movement (the prefab CARRIES its own movement SO)")]
     [SerializeField] private SOMovementParameters movementParameters;
 
     private Vector2 spawnOrigin;
@@ -24,8 +23,8 @@ public class EnemyVulture : Enemy
 
     /// <summary>
     /// (Optional) Spawner injection — overrides the prefab's serialized
-    /// movementParameters. Call AFTER pool Get if you want a different SO
-    /// than the prefab's default. (The old Task 2 API, kept for flexibility.)
+    /// movementParameters. Call AFTER pool Get if you want a different
+    /// movement asset than the prefab's default.
     /// </summary>
     public void Init(SOMovementParameters parameters)
     {
@@ -34,7 +33,7 @@ public class EnemyVulture : Enemy
         initialized = movementParameters != null;
     }
 
-    /// <summary>(Task 4) Pool "Get" hook — re-arm movement state.</summary>
+    /// <summary>Pool "Get" hook — re-arm movement state.</summary>
     public override void Init()
     {
         base.Init();
@@ -47,7 +46,7 @@ public class EnemyVulture : Enemy
         }
     }
 
-    /// <summary>(Task 4) Pool "Return" hook — reset movement state.</summary>
+    /// <summary>Pool "Return" hook — reset movement state.</summary>
     public override void ResetObject()
     {
         initialized = false;
@@ -64,6 +63,7 @@ public class EnemyVulture : Enemy
         transform.position = MovementPatterns.GetPosition(movementParameters, elapsed, spawnOrigin);
     }
 
+    /// <summary>Per-frame: advance the movement.</summary>
     private void Update()
     {
         Move();

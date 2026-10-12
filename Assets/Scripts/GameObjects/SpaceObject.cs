@@ -10,18 +10,18 @@
 ///   3. The collision plumbing: the Unity OnTriggerEnter2D adapter, the shared
 ///      "both objects must be active" guard, and the virtual OnCollision hook
 ///      where each subclass decides what a collision means FOR ITSELF.
-///   4. (Task 4) The POOL lifecycle hooks: Init() + ResetObject() — called by
+///   4. The POOL lifecycle hooks: Init() + ResetObject() — called by
 ///      ObjectPool on Get/Return, so the pool never reaches into subclass state.
-///   5. (Task 5) The shared death state + ritual: IsAlive + virtual Die().
+///   5. The shared death state + ritual: IsAlive + virtual Die().
 ///
-/// What is deliberately NOT here (rule: don't put in the base what derived
-/// classes don't need): health, damage, firing, movement. Damage is a
-/// CAPABILITY, not a category — the classes that can be damaged implement
-/// IDamageable (types, not tags — rule 2.3).
+/// What is deliberately NOT here (don't put in the base what derived classes
+/// don't need): health, damage, firing, movement. Damage is a CAPABILITY,
+/// not a category — the classes that can be damaged implement IDamageable
+/// (a type, not a tag).
 ///
-/// Design rule applied everywhere: "react to the other, act on yourself" —
-/// a collision handler inspects the OTHER object's type and applies the effect
-/// to itself / through its own public API.
+/// Core collision principle applied everywhere: "react to the other, act on
+/// yourself" — a collision handler inspects the OTHER object's type and
+/// applies the effect to itself / through its own public API.
 /// </summary>
 public abstract class SpaceObject : MonoBehaviour
 {
@@ -33,7 +33,7 @@ public abstract class SpaceObject : MonoBehaviour
     public bool IsActive { get; private set; } = true;
 
     /// <summary>
-    /// (Task 5) Is this object still ALIVE (not dead)? Distinct from IsActive:
+    /// Is this object still ALIVE (not dead)? Distinct from IsActive:
     /// IsActive = "in play / allowed to react", IsAlive = "not dead".
     /// Set false by Die(); a pooled recycled object is inactive-but-alive.
     /// </summary>
@@ -59,8 +59,7 @@ public abstract class SpaceObject : MonoBehaviour
 
     /// <summary>
     /// The object's removal ritual: deactivate first (so it can no longer react),
-    /// then remove it from the scene. "Object removal is NOT Destroy — it is our
-    /// own method" (task rule). Subclasses may extend the ritual later
+    /// then remove it from the scene. Subclasses may extend the ritual later
     /// (death effects, drops, scoring) without duplicating the core.
     /// </summary>
     public virtual void Despawn()
@@ -69,10 +68,10 @@ public abstract class SpaceObject : MonoBehaviour
         Object.Destroy(gameObject);
     }
 
-    // ---- Task 4 additions: the pool's two lifecycle hooks ----
+    // ---- The pool's two lifecycle hooks ----
 
     /// <summary>
-    /// (Task 4) Pool "Get" hook: make this object ready-for-use and active again.
+    /// Pool "Get" hook: make this object ready-for-use and active again.
     /// Default just flips the shared state; subclasses override to also re-arm
     /// their OWN per-object state (reset elapsed, re-cache spawnOrigin, reset
     /// Damage/HP, (re)start firing, reposition).
@@ -84,21 +83,19 @@ public abstract class SpaceObject : MonoBehaviour
     }
 
     /// <summary>
-    /// (Task 4) Pool "Return" hook: stop + reset per-object behaviour BEFORE the
-    /// pool deactivates it (stop firing loops, reset timers/elapsed, clear
-    /// one-shot state). Called by ObjectPool.Return, never by game code directly.
+    /// Pool "Return" hook: stop + reset per-object behaviour BEFORE the pool
+    /// deactivates it (stop firing loops, reset timers/elapsed, clear one-shot
+    /// state). Called by ObjectPool.Return, never by game code directly.
     /// </summary>
     public virtual void ResetObject()
     {
         // default: no object-specific reset
     }
 
-    // ---- Task 5 additions: shared death state + ritual ----
-
     /// <summary>
-    /// (Task 5) The shared death ritual: mark dead, then (default) nothing —
-    /// subclasses override to add their own death behaviour (recycle to pool for
-    /// pooled objects, log + stop for the player, etc.).
+    /// The shared death ritual: mark dead, then (default) nothing — subclasses
+    /// override to add their own death behaviour (recycle to pool for pooled
+    /// objects, log + stop for the player, etc.).
     /// Virtual so Player/Enemy can add death effects, drops, scoring, respawn.
     /// </summary>
     public virtual void Die()
@@ -118,16 +115,16 @@ public abstract class SpaceObject : MonoBehaviour
 
     /// <summary>
     /// Unity trigger adapter (the ONLY place a Unity message touches this class).
-    /// Applies the shared guard — neither object reacts unless BOTH are active —
-    /// then hands over to the virtual hook. One GetComponent per event, never
-    /// per frame (rule 2.6).
+    /// Applies the shared guards — neither object reacts unless BOTH are active
+    /// AND alive — then hands over to the virtual hook. One GetComponent per
+    /// event, never per frame.
     /// </summary>
     private void OnTriggerEnter2D(Collider2D other)
     {
         SpaceObject otherObject = other.GetComponent<SpaceObject>();
         if (otherObject == null) return;
         if (!IsActive || !otherObject.IsActive) return;
-        if (!IsAlive || !otherObject.IsAlive) return; // (Task 5) dead objects don't collide
+        if (!IsAlive || !otherObject.IsAlive) return; // dead objects don't collide
 
         OnCollision(otherObject);
     }

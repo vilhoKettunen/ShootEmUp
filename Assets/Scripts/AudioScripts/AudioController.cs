@@ -4,12 +4,20 @@ using UnityEngine;
 using UnityEngine.Audio;
 
 /// <summary>
-///  AudioController is a Singleton (Monobehaviour) class that is used to play music and sfx through AudioMixer output. 
-///  It adds three AudioSource components to a GameObject for mixing music tracks and playing sound effects.
+/// AudioController is a Singleton (Monobehaviour) class that plays music and
+/// sfx through an AudioMixer. It adds three AudioSource components to its
+/// GameObject:
+///   - music1AudioSource  → routed to the "Music1" mixer group
+///   - music2AudioSource  → routed to the "Music2" mixer group
+///   - sfxAudioSource     → routed to the "SFX" mixer group
+///
+/// Music cross-fades between the two music sources by switching which
+/// AudioMixer snapshot (music1FullVolume / music2FullVolume / noMusic) is
+/// active, so a track can fade out while another fades in.
 /// </summary>
-/// 
 public class AudioController : SingletonMono<AudioController>
 {
+    /// <summary>The music track currently assigned to the active music source.</summary>
     public MusicTrack CurrentlyPlayingTrack { get; private set;}
     private MusicPlayList musicPlayList;
     private MusicPlayList fxPlayList;
@@ -33,15 +41,14 @@ public class AudioController : SingletonMono<AudioController>
     private float masterPitch;
 
     #region Interface
-    /// <summary>
-    /// Pause AudioListener.
-    /// </summary>
+    /// <summary>Pause / resume the global AudioListener.</summary>
     /// <param name="_paused">Pause/unpause AudioListener.</param>
     public static void PauseAudioListener(bool _paused)
     {
         AudioListener.pause = _paused;
     }
 
+    /// <summary>Converts a 0..1 volume percent to a decibel value in the -80..0 range.</summary>
     private float Percent01ToDb(float percent)
     {
         float dbRange = Mathf.Abs(minDb) + Mathf.Abs(maxDb);
@@ -49,32 +56,33 @@ public class AudioController : SingletonMono<AudioController>
     }
 
     /// <summary>
-    /// Play sound effect with sfxAudioSource. Output through AudioMixer's SFX AudioMixerGroup
+    /// Play a sound effect on the SFX source (routed to the SFX mixer group).
+    /// Optionally sets volume, pitch, and a delayed start.
     /// </summary>
     /// <param name="soundEffectClip">AudioClip to play.</param>
-    /// <param name="sourceVolume">Optinal sourceVolume Output volume.</param>
+    /// <param name="sourceVolume">Optional output volume.</param>
     /// <param name="pitch">Optional pitch.</param>
-    /// <param name="delayd">Optionally play delayed.</param>
-    public void PlaySoundEffect(AudioClip soundEffectClip, float sourceVolume = 1f, float pitch = 1f, float delayd = 0f)
+    /// <param name="delayed">Optionally delay the start (seconds).</param>
+    public void PlaySoundEffect(AudioClip soundEffectClip, float sourceVolume = 1f, float pitch = 1f, float delayed = 0f)
     {
         sfxAudioSource.pitch = pitch;
 
-        if (delayd > 0)
+        if (delayed > 0)
         {
             sfxAudioSource.clip = soundEffectClip;
             sfxAudioSource.volume = sourceVolume;            
-            sfxAudioSource.PlayDelayed(delayd);
+            sfxAudioSource.PlayDelayed(delayed);
         }
         else
             sfxAudioSource.PlayOneShot(soundEffectClip, sourceVolume);
     }
 
     /// <summary>
-    /// Play sound effect from Audio FX playlist with sfxAudioSource. Output through AudioMixer's SFX AudioMixerGroup
+    /// Play a sound effect looked up by name in the FX playlist.
     /// </summary>
-    /// <param name="soundEffectClipName">String name of the clip added to Audio FX playlist(ScriptableObject)</param>
+    /// <param name="soundEffectClipName">String name of the clip on the Audio FX playlist (ScriptableObject).</param>
     /// <param name="sourceVolume">Optional output volume.</param>
-    /// <param name="pitch">Optional pitch</param>
+    /// <param name="pitch">Optional pitch.</param>
     public void PlaySoundEffect(string soundEffectClipName, float sourceVolume = 1f, float pitch = 1f)
     {
         AudioClip clip = fxPlayList.Tracks.FirstOrDefault(matchingClip => matchingClip.Name == soundEffectClipName).MusicClip;
@@ -85,38 +93,36 @@ public class AudioController : SingletonMono<AudioController>
             Debug.LogWarning("Audio effect '" + soundEffectClipName + "' not on Audio FX playlist!");
     }
 
-    /// <summary>
-    /// Stop AudioMixer's SFX AudioMixerGroup.
-    /// </summary>
+    /// <summary>Stops the SFX source.</summary>
     public void StopSoundEffect()
     {
         sfxAudioSource.Stop();
     }
 
     /// <summary>
-    /// Play and mix music track with currently playing music track.     
+    /// Play a music track looked up by name in the music playlist, cross-faded
+    /// with whatever is currently playing.
     /// </summary>
     /// <param name="trackName">Music track's string name (from MusicPlayList).</param>
     /// <param name="sourceVolume">Output volume.</param>
-    /// <param name="transitionTime">Transition time to this track.</param>
+    /// <param name="transitionTime">Fade transition time (seconds).</param>
     /// <param name="loop">Play on loop.</param>
-    /// <returns>Return success.</returns>
-
+    /// <returns>True if the track was found and started.</returns>
     public bool PlayTrack(string trackName, float sourceVolume = 1f, float transitionTime = 0f, bool loop = true)
     {
         MusicTrack track = musicPlayList.Tracks.FirstOrDefault(matchingTrack => matchingTrack.Name == trackName);
         if (track != null)
             PlayTrack(track, sourceVolume, transitionTime, loop);
 
-        return track != null; //<-- to avoid string typos...
+        return track != null; // guards against silent string typos
     }
 
     /// <summary>
-    /// Play and mix music track with currently playing music track.     
+    /// Play a music track, cross-faded with the currently playing track.
     /// </summary>
-    /// <param name="trackName">Music track's string name (from MusicPlayList).</param>
+    /// <param name="track">The MusicTrack to play.</param>
     /// <param name="sourceVolume">Output volume.</param>
-    /// <param name="transitionTime">Transition time to this track.</param>
+    /// <param name="transitionTime">Fade transition time (seconds).</param>
     /// <param name="loop">Play on loop.</param>
     public void PlayTrack(MusicTrack track, float sourceVolume = 1f, float transitionTime = 0f, bool loop = true)
     {
@@ -124,54 +130,47 @@ public class AudioController : SingletonMono<AudioController>
         TransitionMixers(track, sourceVolume, transitionTime, loop);
     }
 
-    /// <summary>
-    /// Fade out music by transitioning to non-playing mixer channel.
-    /// </summary>
+    /// <summary>Fades out the current music by transitioning to the silent mixer snapshot.</summary>
     /// <param name="_transitionTime">Transition time in seconds.</param>
     public void FadeOutMusic(float _transitionTime)
     {
         TransitionMixers(null, 0, _transitionTime, false, true);
     }
 
-    /// <summary>
-    /// Fade in music
-    /// </summary>
+    /// <summary>Fades the current music back in.</summary>
     /// <param name="_transitionTime">Transition time in seconds.</param>
     public void FadeInMusic(float _transitionTime)
     {
         TransitionMixers(null, 1f, _transitionTime);
     }
 
-    /// <summary>
-    /// Set AudioMixer's MasterVolume.
-    /// </summary>
-    /// <param name="volume">Set volume as percent 0-1.</param>
+    /// <summary>Set the master mixer volume (0..1 percent).</summary>
+    /// <param name="volume">Volume as percent 0-1.</param>
     public void SetMasterVolume(float volume)
     {
-        //TODO: Yet another piece of shit Unity bug workaround:
+        // Delayed by one frame to work around a Unity quirk where mixer
+        // parameters set during Awake are sometimes ignored.
         StartCoroutine(SetVolumeDelayed("MasterVolume", volume));
     }
 
-    /// <summary>
-    /// Set AudioMixer's SfxVolume.
-    /// </summary>
-    /// <param name="volume">Set volume as percent 0-1.</param>
+    /// <summary>Set the SFX mixer volume (0..1 percent).</summary>
+    /// <param name="volume">Volume as percent 0-1.</param>
     public void SetSfxVolume(float volume)
     {
-        //TODO: Yet another piece of shit Unity bug workaround:
         StartCoroutine(SetVolumeDelayed("SfxVolume", volume));
     }
 
-    /// <summary>
-    /// Set AudioMixer's MusicVolume    
-    /// </summary>
-    /// <param name="volume">Set volume as percent 0-1.</param>
+    /// <summary>Set the music mixer volume (0..1 percent).</summary>
+    /// <param name="volume">Volume as percent 0-1.</param>
     public void SetMusicVolume(float volume)
     {
-        //TODO: Yet another piece of shit Unity bug workaround:
-        StartCoroutine(SetVolumeDelayed("MusicVolume", volume));        
+        StartCoroutine(SetVolumeDelayed("MusicVolume", volume));
     }
 
+    /// <summary>
+    /// Applies a mixer volume parameter one frame later (see Unity quirk note
+    /// on the Set*Volume methods).
+    /// </summary>
     IEnumerator SetVolumeDelayed(string volumeName, float volume)
     {
         yield return null;
@@ -181,6 +180,12 @@ public class AudioController : SingletonMono<AudioController>
     #endregion
 
     #region Private
+    /// <summary>
+    /// Cross-fades between the two music sources by switching AudioMixer
+    /// snapshots: the source that is NOT currently playing is faded up to full
+    /// volume (and started if a track is provided), the other is faded down.
+    /// If _stop is true, the current source is stopped outright (fade out).
+    /// </summary>
     private void TransitionMixers(MusicTrack _track, float _sourceVolume = 1f, float _transitionTime = 0f, bool _loop = true, bool _stop = false)
     {
         if (currentMusicSource == music1AudioSource)
@@ -210,6 +215,11 @@ public class AudioController : SingletonMono<AudioController>
     #endregion
 
     #region Unity
+    /// <summary>
+    /// One-time setup: loads the AudioMixer, the music/FX playlists, wires the
+    /// three AudioSources to their mixer groups, and starts with the silent
+    /// snapshot active.
+    /// </summary>
     private void Awake()
     {
         Debug.Log("MIXER PRESENT");
@@ -220,28 +230,28 @@ public class AudioController : SingletonMono<AudioController>
 
         AudioMixerGroup[] musicGroups = mixer.FindMatchingGroups("Music");
 
-        //Get snapshots from mixer
+        // Get the cross-fade snapshots from the mixer.
         noMusic = mixer.FindSnapshot("NoMusic");
         music1FullVolume = mixer.FindSnapshot("Music1FullVolume");
         music2FullVolume = mixer.FindSnapshot("Music2FullVolume");
 
-        //Start with no music snapshot...
+        // Start silent (no music) until a track is explicitly played.
         noMusic.TransitionTo(0);
 
         musicPlayList = Resources.Load("SoundtrackPlaylist") as MusicPlayList;
         fxPlayList = Resources.Load("AudioFxPlaylist") as MusicPlayList;
 
-        //Add source (and correct output) for Music 1
+        // Music 1 source → "Music1" mixer group.
         music1AudioSource = Instance.gameObject.AddComponent<AudioSource>();
-        music1AudioSource.outputAudioMixerGroup = musicGroups[1]; //<-- Music1 in mixer
+        music1AudioSource.outputAudioMixerGroup = musicGroups[1];
         music1AudioSource.loop = true;
 
-        //Add source (and correct output) for Music 2
+        // Music 2 source → "Music2" mixer group.
         music2AudioSource = Instance.gameObject.AddComponent<AudioSource>();
-        music2AudioSource.outputAudioMixerGroup = musicGroups[2];  //<-- Music2 in mixer
+        music2AudioSource.outputAudioMixerGroup = musicGroups[2];
         music2AudioSource.loop = true;
 
-        //Add sfx source and correct output
+        // SFX source → "SFX" mixer group (one-shot, no loop).
         sfxAudioSource = Instance.gameObject.AddComponent<AudioSource>();
         sfxAudioSource.outputAudioMixerGroup = mixer.FindMatchingGroups("SFX").First();
         sfxAudioSource.loop = false;

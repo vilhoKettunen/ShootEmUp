@@ -5,12 +5,12 @@
 /// (e.g. "MachineGunWeaponSpecs", "SpreadGunWeaponSpecs").
 ///
 /// Holds everything that makes a weapon a WEAPON: its name, its bullet prefab,
-/// its bullet movement identity (a SOMovementParameters reference — the 5
+/// its bullet movement identity (a SOMovementParameters reference — the
 /// weapons feel different partly through different bullet motion), its shoot
 /// sound, its fire interval (fireRate stays the player's responsibility — the
 /// player owns the fireTimer, this asset just supplies the interval number),
-/// and the per-level damage table (Q-T3-1: baseDamage + damagePerLevel,
-/// defaults set so the 5 weapons scale to roughly the same DPS).
+/// and the per-level damage table (baseDamage + damagePerLevel, defaults set
+/// so the weapons scale to roughly the same DPS).
 ///
 /// The state (current level) does NOT live here — it lives in the plain C#
 /// Weapon class (data asset vs. runtime state separation).
@@ -42,14 +42,23 @@ public class SOWeaponSpecs : ScriptableObject
     [Tooltip("Damage table — index 0..4 = level 1..5. Length should match maxLevel.")]
     [SerializeField] private int[] damagePerLevel = { 10, 14, 19, 25, 32 };
 
+    /// <summary>The weapon's display name.</summary>
     public string WeaponName => weaponName;
+    /// <summary>The sound played when this weapon fires.</summary>
     public AudioClip ShootAudioClip => shootAudioClip;
+    /// <summary>The bullet prefab this weapon spawns.</summary>
     public GameObject BulletPrefab => bulletPrefab;
+    /// <summary>Movement identity for the bullets this weapon fires.</summary>
     public SOMovementParameters BulletMovement => bulletMovement;
+    /// <summary>World-space offset from the shooter where the bullet spawns.</summary>
     public Vector2 SpawnOffset => spawnOffset;
+    /// <summary>Seconds between shots.</summary>
     public float FireInterval => fireInterval;
+    /// <summary>The highest level this weapon can reach.</summary>
     public int MaxLevel => maxLevel;
+    /// <summary>Damage of the first shot before any level-up.</summary>
     public int BaseDamage => baseDamage;
+    /// <summary>Per-level damage table (index 0 = level 1).</summary>
     public int[] DamagePerLevel => damagePerLevel;
 
     /// <summary>

@@ -1,13 +1,12 @@
 ﻿using UnityEngine;
 
 /// <summary>
-/// (Task 4 / shared with Task 5) Pure C# static helpers that bridge the
-/// world/camera boundary — "is this sprite in the camera view?" and
-/// "where should I spawn N objects across the top of the camera?".
+/// Pure C# static helpers that bridge the world/camera boundary — "is this
+/// sprite in the camera view?" and "where should I spawn N objects across the
+/// top of the camera?".
 ///
-/// Plain C# static class (rule 2.4: no MonoBehaviour, no per-object state).
-/// Uses Camera.main — the standard scene camera (the only "scene" reference
-/// in the codebase, which is acceptable per the scene-independence rule 2.5).
+/// Plain C# static class (no MonoBehaviour, no per-object state).
+/// Uses Camera.main — the standard scene camera.
 /// </summary>
 public static class CameraHelper
 {
@@ -15,6 +14,10 @@ public static class CameraHelper
     /// True if the sprite's bounds intersect the camera's view frustum.
     /// Used by bullets to know when they have left the play area and should
     /// be returned to the pool.
+    ///
+    /// Strategy: check the CENTER first (reliable for small objects like
+    /// bullets), then fall back to the 4 corners (catches large objects that
+    /// straddle the screen edge).
     /// </summary>
     public static bool SpriteBoundsInCameraView(SpriteRenderer sr, Camera cam)
     {
@@ -60,7 +63,7 @@ public static class CameraHelper
     /// <summary>
     /// Spreads `count` spawn positions horizontally across the top of the
     /// camera view. Returns the position for the given `index` (0-based).
-    /// Used by enemy spawn (Task 4 §7, Task 5).
+    /// Used by enemy spawn.
     ///
     /// The sprite's bounds height is used to push the spawn slightly ABOVE
     /// the top edge so the object enters the view naturally.

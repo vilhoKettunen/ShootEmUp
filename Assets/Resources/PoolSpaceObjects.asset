@@ -24,10 +24,14 @@ MonoBehaviour:
   - prefab: {fileID: 8880836593133381193, guid: e8394d9f08414e444b1b615aba317a02, type: 3}
     initialSize: 1
   - prefab: {fileID: 3911284158991931837, guid: b0d91b2663b47414295be73c07dd7f30, type: 3}
-    initialSize: 1
+    initialSize: 10
   - prefab: {fileID: 3911284158991931837, guid: eb9805b4d26412f4fa9ab8f12e86ebe5, type: 3}
-    initialSize: 1
+    initialSize: 10
   - prefab: {fileID: 3911284158991931837, guid: c2e7628acea0f714896a51aa55c17f3e, type: 3}
-    initialSize: 1
+    initialSize: 10
   - prefab: {fileID: 3911284158991931837, guid: 940435d97b97a8d43bacf24ca9c68f63, type: 3}
-    initialSize: 1
+    initialSize: 10
+  - prefab: {fileID: 3911284158991931837, guid: 735a91fd5e104d24fb8bee1b2c52609a, type: 3}
+    initialSize: 10
+  - prefab: {fileID: 3911284158991931837, guid: 365f3ab1d430f6a4aa80fe7ee8276876, type: 3}
+    initialSize: 10

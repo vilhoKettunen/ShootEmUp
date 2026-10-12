@@ -14,9 +14,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SOWeaponSpecs
   weaponName: Spread
   shootAudioClip: {fileID: 8300000, guid: 660bfb3143148134485824c58f87ee83, type: 3}
-  bulletPrefab: {fileID: 3911284158991931837, guid: 940435d97b97a8d43bacf24ca9c68f63, type: 3}
+  bulletPrefab: {fileID: 3911284158991931837, guid: 735a91fd5e104d24fb8bee1b2c52609a, type: 3}
   bulletMovement: {fileID: 11400000, guid: 24536be6785ef6a42ac67ec3cef2708b, type: 2}
-  spawnOffset: {x: 0, y: 1}
+  spawnOffset: {x: 0, y: 1.5}
   fireInterval: 0.15
   maxLevel: 5
   baseDamage: 15
