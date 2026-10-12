@@ -1,0 +1,268 @@
+﻿# Task 5 — Collisions & Their Handling (by Types) · Learned Lessons & Concepts
+
+> The "how does it actually work" view. Concepts used by the Task 5 design,
+> explained the way they matter for THIS course (rules §2.1–§2.8).
+
+## 1. "Which object touches which" — why TYPES beat tags here
+
+The brief's core sentence: "olennaista on mikä objekti törmää mihinkin ja miten
+siihen reagoidaan … käyttäen tyyppejä (esim. tagien sijaan)". In code that becomes
+a sequence of type tests on the `other`:
+
+```csharp
+if (other is Collectable c) { c.Collect(); }
+else if (other is Enemy e)  { TakeDamage(1); }
+else if (other is IDamageable d) { /* ... */ }
+```
+
+vs. the tag approach you are AVOIDING:
+
+```csharp
+if (other.CompareTag("Enemy")) { ... }
+else if (other.CompareTag("Collectable")) { ... }
+```
+
+Why types win (rule 2.3, now doing real work):
+- **Compiler-checked.** `is Enemy` won't compile if you misspell a tag string
+  "Enmemy" — a tag typo is a silent runtime no-op. Types turn a runtime string
+  bug into a compile error.
+- **IntelliSense + refactor-safe.** Rename `Enemy` → `HostileEnemy` and every `is`
+  test updates; the tag strings do not.
+- **Capability vs. identity.** `other is IDamageable` answers "can I hurt it?" for
+  ANY current/future damageable (enemy, obstacle-later, destructible) without
+  enumerating concrete types. That is "program to a capability".
+- **No tag management.** You never touch Project Settings → Tags. There is nothing
+  to mis-assign in the Inspector.
+
+**Where `TryGetComponent` earns its keep (the brief's "Unityssa siis usein
+TryGetComponent"):** when `other` is a `Collider2D`/`GameObject` (not already a
+typed reference) and you need a COMPONENT, `other.TryGetComponent<Enemy>(out var e)`
+is the idiomatic one-call "is there an Enemy, and give it to me". In OUR design the
+base adapter already hands us a typed `SpaceObject`, so we mostly use `is`;
+`TryGetComponent` shows up if you ever handle the raw `Collider2D` directly.
+
+## 2. One collision pipeline, many behaviours — why we extend `OnCollision`, not add `OnTriggerEnter2D`
+
+The brief writes per-script `OnTriggerEnter2D(Collider2D other)`. Our codebase
+(Task 1) already centralized that in `SpaceObject`:
+
+```
+OnTriggerEnter2D  (the ONLY Unity message, ONE place)
+   → guard: both objects active?
+   → OnCollision(other)  (virtual — the per-object DECISION)
+```
+
+So Task 5 adds the type-checks INSIDE each class's existing `OnCollision` override
+instead of sprinkling new `OnTriggerEnter2D` methods across Bullet/Player/Enemy.
+Why this is the same INTENT with a cleaner MECHANISM:
+- **§2.2 one script per object + one pipeline.** Every object still has exactly one
+  collision entry point. Adding per-class `OnTriggerEnter2D` would mean 3–4 Unity
+  adapters doing the same `GetComponent<SpaceObject>` + active-guard, duplicated.
+- **The active-guard stays in ONE place.** A pooled object is inactive while
+  recycled; the single base guard guarantees a recycled object never reacts.
+  Per-class `OnTriggerEnter2D` would each need to re-implement that guard (easy to
+  forget on one).
+- **The brief's type-checks are preserved verbatim** — only the method name changes
+  from `OnTriggerEnter2D` to `OnCollision`. At code review you can point at the base
+  and say "the teacher's OnTriggerEnter2D logic lives here, centralized".
+
+## 3. Owner is the bullet's identity — why ONE Bullet class serves both sides
+
+The brief: "Sama Bullet-luokka toimii sekä pelaajan että vihollisten ammuksille" and
+"tietää nyt kuka sen ampui ja kuinka paljon vahinkoa se tekee". The mechanism:
+
+```csharp
+public Bullet SetOwnerAndDamage(SpaceObject owner, int damage)
+{
+    this.owner = owner;   // PlayerController OR Enemy
+    this.Damage = damage;
+    return this;          // ← chains after the pool Get
+}
+```
+
+The bullet is a GENERIC projectile. It knows two facts about itself: WHO fired it
+(owner) and HOW HARD it hits (damage). It does NOT know "I am a player bullet" or
+"I am an enemy bullet" — it DERIVES that from the owner's TYPE at collision time:
+
+```csharp
+if (owner is PlayerController && other is IDamageable ... ) { other.TakeDamage(Damage); }
+else if (owner is Enemy && other is PlayerController)       { other.TakeDamage(Damage); }
+```
+
+Why this is the cleanest possible shape (rule 2.3 at its best):
+- **No subclassing.** A `PlayerBullet : Bullet` and `EnemyBullet : Bullet` would
+  duplicate the whole class for one field. The owner reference is one field + two
+  type checks — far less code, and a 10th shooter type is free.
+- **No tags.** "Player bullet" is not a tag; it is `owner is PlayerController`.
+- **Data-driven feel.** Different owner + different movement SO + different damage =
+  visually/behaviourally distinct bullets from the SAME class. Identity is DATA, not
+  a type hierarchy.
+
+**The `return this` is a deliberate API choice (the brief calls it out):** it lets
+the caller write
+`pool.Get<Bullet>(proto).SetOwnerAndDamage(shooter, dmg)` OR (our clearer form)
+`var b = pool.Get<Bullet>(proto); b.SetOwnerAndDamage(shooter, dmg);`. The value
+return exists specifically so it "ketjuttaa Get()-kutsun perään".
+
+## 4. `TakeDamage` → `Die()` → (pool) Return — the death ritual chain
+
+The brief's death flow, made concrete on our classes:
+
+```
+Bullet hits Enemy:
+   Bullet.OnCollision → enemy.TakeDamage(dmg)
+       → enemy.health -= dmg
+       → if (health <= 0) enemy.Die()
+           → IsAlive = false
+           → pool.Return(enemy)      // Task 4: recycle, NOT Destroy
+```
+
+- `TakeDamage` = "I received N damage; decide if I'm dead". It is the CAPABILITY
+  (`IDamageable`) — anyone can call it, only the object knows its own HP.
+- `Die()` = "I am dead" — VIRTUAL, so Player/Enemy add their own death (lives, drops,
+  boss death, respawn). The base gives the shared bit (`IsAlive=false`).
+- **For POOLED objects, "die" = `pool.Return`, not `Destroy`.** This is the Task 4 ↔
+  Task 5 hand-off and the single most important integration: if `Enemy.Die()` still
+  called `Despawn()` (Destroy), you'd leak the pool (the instance vanishes but is
+  still tracked in the pool's dictionaries → a later Get hands out a dead object).
+  The non-pooled player, by contrast, legitimately `Despawn()`s (Destroy) because it
+  is NOT in the pool.
+
+**Why `IsAlive` is separate from `IsActive` (recap, now load-bearing):**
+- `IsActive` = "in play / allowed to react" (pool + spawn). A recycled bullet is
+  inactive-but-alive.
+- `IsAlive` = "not dead". A dead enemy is (for a frame) active-but-dead before it is
+  returned.
+- Conflating them caused the classic bug "is this object gone because it was
+  recycled or because it died?" — two flags, two questions, no ambiguity.
+
+## 5. Firing with a DELAYED LOOP — why not an Update fire-timer
+
+The brief: "StartFiring() käyttää Awaitable-viivettä … kutsuu Shoot()-metodia
+sekunnin välein niin kauan kuin vihollinen on elossa … Ampuminen voidaan suorittaa
+ajastettuna ilman omaa Update()-ajastinta". Two ways to "wait then repeat":
+
+```csharp
+// (a) the brief's Awaitable (if the template's Awaitable is available)
+async Awaitable StartFiring() { while (IsAlive) { Shoot(); await Awaitable.Delay(1f); } }
+
+// (b) the equivalent coroutine (our default, Q-T5-2)
+IEnumerator StartFiring()     { while (IsAlive) { Shoot(); yield return new WaitForSeconds(1f); } }
+```
+
+Why a self-terminating loop beats a per-enemy `Update` timer:
+- **It stops itself when the enemy dies** (`while (IsAlive)`). An Update timer needs
+  you to remember to disable it on death; the loop just exits.
+- **No per-frame cost.** A `Update` runs EVERY frame for EVERY enemy; a `WaitForSeconds`
+  loop only wakes once per shot. With 15 enemies the loop is far cheaper (rule 2.6
+  spirit: don't do per-frame work you don't need).
+- **The interval is DATA** (the `1f` / SO `fireInterval`), so different enemies fire at
+  different rates with the same loop.
+
+**The gotcha:** if the enemy is RETURNED to the pool and reused, the old firing loop
+must be dead. `while (IsAlive)` handles it IF `Die()` sets `IsAlive=false` BEFORE
+returning (it does, §4). A coroutine also needs `StopCoroutine` in `ResetObject()`
+(the Task 4 pool hook) — this is why `Enemy.ResetObject()` should stop its firing
+loop. (Q-T5-2 note.)
+
+## 6. `Collectable.Collect()` — the "point at yourself, player decides" split
+
+The brief: the collectable's `Collect()` (for now) logs + hides the sprite; the
+PLAYER's `Collectable` handling calls it. In our design the direction is:
+
+```
+Collectable.OnCollision(player) → player.Collect(this)      (player: "what do I gain?")
+   AND  Collectable.Collect()   → pool.Return(this) + hide   (collectable: "I'm consumed")
+```
+
+Why the two-sided split (rule 2.7):
+- The COLLECTABLE owns "I am being consumed" (hide + recycle) — that is its own state.
+- The PLAYER owns "what does picking this up DO to me" (later: weapon switch /
+  level-up). Today that is a log; later it becomes real — and ONLY the player's code
+  changes. The collectable never needs to know about weapons/levels.
+- This mirrors Task 1's "the collectable points the player at itself" and Task 3's
+  "the bullet is generic; the spawner knows the payload". The GAIN logic stays in the
+  player, the CONSUMPTION stays in the collectable.
+
+## 7. Friendly fire — why the guards exist and where they live
+
+Without guards, a player bullet could damage the player (its own shooter is the
+player, and the player is `IDamageable`), and an enemy bullet could damage another
+enemy. The fix lives in ONE place — `Bullet.OnCollision` — because the bullet is the
+only object that deals damage:
+
+```csharp
+if (owner is PlayerController && other is IDamageable && !(other is PlayerController)) ...
+else if (owner is Enemy && other is PlayerController) ...
+```
+
+- The `!(other is PlayerController)` on the player-shot branch stops self-hits.
+- Symmetrically, an enemy bullet only ever targets the player (not other enemies).
+- Putting this in the BULLET (not the player/enemy) means every shooter is protected
+  automatically — a future 3rd team (a boss) gets friendly-fire protection for free
+  by adding one branch. This is the "logic lives on the generic side" principle.
+(Q-T5-3 confirms the default.)
+
+## 8. Why there is NO CombatManager / event bus (the tempting wrong move)
+
+"Add a CombatManager that handles all collisions" is the obvious next step and the
+wrong one for this course. The right shape is the one we already have:
+
+- The POOL is a service (on the existing ApplicationController singleton) — it is
+  reused, not replaced by a new manager.
+- Each object owns its own combat behaviour via its PUBLIC API
+  (`TakeDamage`, `Collect`, `SetOwnerAndDamage`, `Die`).
+- Collisions are resolved by the two participants reacting to each other through
+  those APIs — the "react to the other, act on yourself" etiquette from Task 1.
+
+A CombatManager would centralize what should be distributed: it would have to know
+every pair's rules (player-bullet-enemy, enemy-bullet-player, ...) — a rule table
+that grows and is exactly the coupling §2.7 forbids. The distributed design means
+"add a new combatant" = implement `IDamageable` + set the bullet owner + a branch in
+the shooter. Zero manager changes.
+
+## 9. What "testing collisions" concretely means in Play Mode
+
+Observable, no framework (pairs with code-changes §11):
+1. **Player→enemy**: hold fire at the TestDummy; HP drops by exactly the bullet's
+   Damage (log both). Dummy is immortal (Task 3) so you can watch the numbers.
+2. **Recycle, not destroy**: log a bullet's `GetInstanceID()` before and after a hit —
+   the next spawned bullet REUSES it (pool works). Hierarchy bullet count stays
+   bounded during a 10 s fire.
+3. **Enemy fires**: an enemy emits bullets (moving DOWN, EnemyBulletBasic) roughly
+   once per second; they stop when the enemy dies.
+4. **Enemy→player**: fly into an enemy's bullet → player HP drops by the enemy
+   bullet's Damage; the bullet is recycled.
+5. **Death**: kill an enemy → it vanishes (returned to pool) and does NOT reappear
+   (no double-spawn). Player at 0 HP → `Die()` logs.
+6. **No friendly fire**: player bullets never damage the player; enemy bullets never
+   damage other enemies.
+7. **30 s combat soak** → Console CLEAN, Hierarchy counts bounded (no leaks).
+
+Each of these maps to a SPECIFIC design point: #2/#5 → §4 (Return vs Destroy),
+#3 → §5 (delayed loop), #6 → §7 (guards), #1/#4 → §3 (owner routing). If one fails,
+the bug is in that design point, not "Unity collision is flaky".
+
+## 10. Quick self-test (answer before checking code-changes-and-why.txt)
+
+1. Why does the bullet store an `owner` instead of having `PlayerBullet`/`EnemyBullet`
+   subclasses?
+   *(One class, two facts (owner+damage). Identity is DATA + a type check on owner,
+     not a type hierarchy. Adding a shooter type = no new class. Rule 2.3.)*
+2. What is the difference between a bullet's `IsActive` and `IsAlive`?
+   *(IsActive = in play / allowed to react (pool state). IsAlive = not dead (game
+     state). A recycled bullet is inactive-but-alive; a dead enemy is briefly
+     active-but-dead. Two flags, two questions.)*
+3. A pooled enemy dies. Should `Enemy.Die()` call `Despawn()` (Destroy) or
+   `pool.Return(this)`?
+   *(pool.Return — it is pooled; Destroying it would corrupt the pool's dictionaries
+     and cause a "resurrected dead object" bug on the next Get. Only the non-pooled
+     player uses Despawn/Destroy.)*
+4. Why does `SetOwnerAndDamage` return `this`?
+   *(So it chains after the pool Get: `pool.Get<Bullet>(proto).SetOwnerAndDamage(...)`
+     — the brief explicitly wants this.)*
+5. An enemy's firing loop: `while (IsAlive) { Shoot(); await delay; }`. What stops it
+   when the enemy is recycled and reused?
+   *(Die() sets IsAlive=false, so the loop exits; on reuse, ResetObject() must ensure
+     no stale loop is running, and a fresh StartFiring() begins. The loop self-
+     terminates — no manual Update timer to disable.)*

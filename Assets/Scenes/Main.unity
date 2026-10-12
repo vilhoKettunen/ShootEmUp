@@ -225,7 +225,7 @@ Camera:
   far clip plane: 1000
   field of view: 34
   orthographic: 1
-  orthographic size: 5
+  orthographic size: 15
   m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
@@ -469,14 +469,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4e65a7017363f85439d30274ab0d873e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ApplicationController
-  enableTestSpawns: 1
+  PoolSpaceObjects: {fileID: 0}
+  enableTestSpawns: 0
   vultureMovement: {fileID: 11400000, guid: 3e816e896a0419b44aca9583b2eb90b6, type: 2}
   falconMovement: {fileID: 11400000, guid: 07d0fa3e2df74bb458fb33fc95dfaa57, type: 2}
   testBulletMovement: {fileID: 11400000, guid: 77b26cc0edc6c1040ab19e8a917af6c5, type: 2}
   testBulletPrefab: {fileID: 3911284158991931837, guid: ce1a7aa52a9c6174a82091c790ebeff7, type: 3}
-  vulturePrefab: {fileID: 0}
-  falconPrefab: {fileID: 0}
-  testDummyPrefab: {fileID: 0}
+  vulturePrefab: {fileID: 9044448607419390467, guid: c74d1fb59f9dc3745a7e34334d239234, type: 3}
+  falconPrefab: {fileID: 9044448607419390467, guid: 1bc6f7399b041b848b01607054443b50, type: 3}
+  testDummyPrefab: {fileID: 9044448607419390467, guid: 0aac8981204b8574fa710389e32cdfb5, type: 3}
   debugText: {fileID: 0}
   vultureSpawnPosition: {x: -2, y: 4}
   falconSpawnPosition: {x: 2, y: 4}

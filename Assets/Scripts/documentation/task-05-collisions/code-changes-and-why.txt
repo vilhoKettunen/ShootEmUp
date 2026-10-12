@@ -1,0 +1,412 @@
+﻿# Task 5 — Collisions & Their Handling (by Types) · Code Changes & Why
+
+> The "what changes and why" view. STATUS: DESIGN STAGE (code NOT yet written).
+> Task 5 is the LAST major addition before the autumn break: after it, the game has
+> its base architecture + core mechanics (partly still test versions). Work
+> dev-actions.txt top to bottom and answer its Open Questions (Q-T5-1 … Q-T5-5).
+> Cross-task notes + the combined test plan + the DELIVERY checklist live in
+> ../IMPLEMENTATION-GUIDE-tasks-4-5.txt.
+
+## 0. What this task is
+
+The game is a simple 2D game: collisions have NO physics — the collider or the
+target (or both) just DIE. So we handle them in `OnTriggerEnter2D`, and the ESSENCE
+is "WHICH object touches WHICH, and how do we react" — done with TYPES (not tags):
+mostly `TryGetComponent`, and `is` where it fits (e.g. the bullet).
+
+After Task 5 these behaviors WORK:
+- Player fires (from the Task 4 pool), sets the bullet's OWNER + DAMAGE.
+- A PLAYER bullet that hits an ENEMY damages the enemy; then it is returned to the pool.
+- An ENEMY bullet that hits the PLAYER damages the player; then returned to the pool.
+- Enemies fire automatically (a delayed loop, not an Update timer).
+- Player touching an ENEMY → player takes damage; touching a COLLECTABLE → collect it.
+- `SpaceObject.Die()` is the shared "I am dead" hook (virtual, overridable later).
+
+## 1. How this maps onto OUR existing architecture (important)
+
+The brief talks in terms of each script's own `OnTriggerEnter2D(Collider2D other)`.
+OUR codebase already centralized that in the base class (Task 1): `SpaceObject` owns
+the single `OnTriggerEnter2D` + the "both must be active" guard, and each subclass
+implements the virtual `OnCollision(SpaceObject other)`. So we do NOT add new
+`OnTriggerEnter2D` to Bullet/Player/Enemy — we put the type-checks inside the
+EXISTING `OnCollision` overrides. That keeps rule §2.2 (one collision pipeline) and
+§2.1 (don't scatter Unity messages around). The brief's INTENT (type-based handling)
+is preserved 1:1; only WHERE the code lives matches our established design.
+
+```
+Unity trigger event
+   → SpaceObject.OnTriggerEnter2D (the ONLY Unity adapter; active-guard)
+        → SpaceObject.OnCollision(other)   [virtual]
+             → Bullet.OnCollision   → owner/damage type-check → Return to pool
+             → PlayerController.OnCollision → Collectable / Enemy / Obstacle
+             → Enemy.OnCollision   → (lets the bullet handle its side)
+             → Collectable.OnCollision → player.Collect(this)
+```
+
+## 2. SpaceObject gains `IsAlive` + `Die()` (the shared death hook)
+
+The brief adds to SpaceObject: `IsAlive = false` + `Die()`, with `Die()` VIRTUAL so
+Player/Enemy can later specialize it. Our base currently has `IsActive` (game
+participation) but not a death flag/ritual. Add:
+
+```csharp
+// ---- Task 5 additions: shared death state + ritual ----
+
+/// <summary>
+/// Is this object still ALIVE (not dead)? Distinct from IsActive (in-play).
+/// Set false by Die(); subclasses override Die() to add their own death behaviour.
+/// </summary>
+public bool IsAlive { get; private set; } = true;
+
+/// <summary>
+/// The shared death ritual: mark dead, then (default) remove from the world.
+/// Virtual so Player/Enemy can add death effects, drops, scoring, respawn, etc.
+/// For POOLED objects, "die" normally means Return-to-pool (see Bullet/Enemy).
+/// </summary>
+public virtual void Die()
+{
+    IsAlive = false;
+    Debug.Log("[SpaceObject] " + name + " died.");
+}
+```
+
+**Why both `IsAlive` AND `IsActive` (they are NOT the same):**
+- `IsActive` (existing) = "am I in play / allowed to react?" — the pool + spawn set it.
+- `IsAlive` (new, the brief's term) = "am I not DEAD?" — the game logic sets it.
+  A pooled bullet is inactive-but-alive when recycled; a dead enemy is active-but-dead
+  for one frame until it is removed/returned. Keeping both explicit avoids the
+  classic "is it gone because it was recycled or because it was killed?" confusion.
+- `Die()` VIRTUAL = the brief's "Die() on virtual, joten siitä voidaan myöhemmin
+  tehdä luokkakohtaisia toteutuksia". Player/Enemy override it later for lives,
+  drops, boss death.
+
+## 3. Bullet — the OWNER + type-based hit + pool recycle
+
+The brief: "Bullet tietää nyt kuka sen ampui ja kuinka paljon vahinkoa se tekee",
+`SetOwnerAndDamage(owner, damage)` RETURNS `this` (so it chains after `Get`), and
+`OnTriggerEnter2D` uses `is`:
+- PLAYER's bullet can hurt an ENEMY.
+- ENEMY's bullet can hurt the PLAYER.
+- After a hit, the bullet is RETURNED to the pool.
+
+Our `Bullet` already has `Damage` (set at spawn) + `OnCollision`. Task 5 adds the
+OWNER and the owner-based type routing + the pool `Return`:
+
+```csharp
+public class Bullet : SpaceObject
+{
+    // existing: movementParameters, spawnOrigin, elapsed, initialized, Damage
+
+    private SpaceObject owner;   // WHO fired this (PlayerController or Enemy)
+
+    /// <summary>
+    /// Set owner + damage. RETURNS this so it can chain after a pool Get:
+    ///   var b = pool.Get<Bullet>(proto); b.SetOwnerAndDamage(shooter, damage);
+    /// </summary>
+    public Bullet SetOwnerAndDamage(SpaceObject owner, int damage)
+    {
+        this.owner = owner;
+        Damage = damage;
+        return this;
+    }
+
+    /// <summary>Who fired this bullet (PlayerController or an Enemy).</summary>
+    public SpaceObject Owner => owner;
+
+    protected override void OnCollision(SpaceObject other)
+    {
+        // Type-based routing (types, not tags — rule 2.3):
+        //   player's bullet  -> damage the enemy
+        //   enemy's bullet   -> damage the player
+        bool playerShot = owner is PlayerController;
+        bool enemyShot  = owner is Enemy;
+
+        bool dealtDamage = false;
+        if (playerShot && other is IDamageable d && !(other is PlayerController))
+        {
+            d.TakeDamage(Damage);
+            dealtDamage = true;
+        }
+        else if (enemyShot && other is PlayerController p)
+        {
+            p.TakeDamage(Damage);
+            dealtDamage = true;
+        }
+
+        // Spent: return to the pool (Task 4) — whether it hit something damageable
+        // or not (a bullet that hits a wall is spent too — Q-T3-3 behaviour, now via pool).
+        ApplicationController.Instance.ObjectPool.Return(this);
+    }
+
+    // Init()/ResetObject() (Task 4): ResetObject also clears owner (see task-04 §3.2)
+}
+```
+
+**Why this shape (matching the brief):**
+- `SetOwnerAndDamage` RETURNS `this` EXACTLY as the brief says ("Metodi palauttaa
+  this, joten sitä voidaan ketjuttaa Get()-kutsun perään"). That is the whole
+  reason it returns a value — chaining after the pool `Get`.
+- The `owner is PlayerController` / `owner is Enemy` checks ARE the brief's "is-
+  avainsanalle tulee hyötykäyttö" — here `is` (not `TryGetComponent`) is the natural
+  test because we already hold the owner reference.
+- "Same Bullet class for player AND enemy bullets" (brief: "Sama Bullet-luokka
+  toimii sekä pelaajan että vihollisten ammuksille") — the ONLY difference is the
+  OWNER. This is rule 2.3 at its best: identity by data (owner + movement + damage),
+  never by a tag or a subclass.
+- The hit ends with `ObjectPool.Return(this)` (Task 4), NOT `Despawn()`. That is the
+  whole point of Task 4 being built first: bullets are recycled, not destroyed.
+
+**Friendly-fire guard:** `!(other is PlayerController)` on the player-shot branch
+prevents a player bullet from damaging the player itself (and vice versa). Cheap,
+prevents the "I shoot myself" bug. (Q-T5-3.)
+
+## 4. PlayerController — fire via pool, collect, take damage
+
+The brief: `FireCurrentWeapon()` gets the current weapon's bullet from the pool, sets
+the player as owner + damage. `OnTriggerEnter2D` (our `OnCollision`) checks, with
+`TryGetComponent`, whether the other is a Collectable (→ `Collect()`) or an Enemy
+(→ player takes damage). `TakeDamage` reduces HP and calls `Die()` at 0.
+
+Our PlayerController ALREADY has `TakeDamage` (logs), `Collect` (logs) and
+`OnCollision` (Enemy/Obstacle → damage). Task 5 makes them REAL:
+
+```csharp
+public class PlayerController : SpaceObject, IDamageable
+{
+    // existing: moveSpeed, weapon state, firing, test hooks
+
+    [SerializeField] private int hitPoints = 3;      // Task 5: real HP (Q-T5-4)
+
+    public int HitPoints => hitPoints;
+
+    // FireCurrentWeapon(): Task 4 already routes through the pool; Task 5 adds owner+damage:
+    private void FireCurrentWeapon()
+    {
+        if (currentWeapon?.BulletPrefab == null) return;
+        Bullet proto = currentWeapon.BulletPrefab.GetComponent<Bullet>();
+        if (proto == null) { Debug.LogError("...no Bullet on prefab..."); return; }
+
+        Bullet b = ApplicationController.Instance.ObjectPool.Get<Bullet>(proto);
+        if (b == null) return;
+        b.transform.position = transform.position + new Vector3(currentWeapon.SpawnOffset.x, currentWeapon.SpawnOffset.y, 0f);
+        b.SetOwnerAndDamage(this, currentWeapon.CurrentDamage);   // THIS task: owner = player
+
+        if (currentWeapon.ShootAudioClip != null)
+            AudioController.Instance.PlaySoundEffect(currentWeapon.ShootAudioClip);
+    }
+
+    public void TakeDamage(int amount)
+    {
+        if (!IsAlive) return;                 // ignore hits while dead
+        hitPoints -= amount;
+        Debug.Log("[Player] Took " + amount + " → HP: " + hitPoints);
+        if (hitPoints <= 0) Die();            // the brief: "kutsuu Die(), jos elämäpisteet loppuvat"
+    }
+
+    protected override void OnCollision(SpaceObject other)
+    {
+        // Type-based handling (the brief's OnTriggerEnter2D intent, in our pipeline):
+        if (other is Collectable c)
+        {
+            c.Collect();                       // brief: "Collectable: kutsutaan Collect()"
+        }
+        else if (other is Enemy e)
+        {
+            TakeDamage(1);                     // brief: "Enemy: pelaaja ottaa vahinkoa" (value later from enemy data)
+        }
+        else if (other is Obstacle)
+        {
+            TakeDamage(1);
+        }
+        // Bullets handle THEIR OWN side (they damage us through our public TakeDamage).
+    }
+}
+```
+
+**Why (the brief's "Miksi?"):** PlayerController owns the PLAYER'S firing, its
+collection, and its own damage response. It reads the weapon (data), asks the pool
+(service), and applies damage to ITSELF. It never reaches into a bullet or an enemy's
+internals — only public APIs (`TakeDamage`, `Collect`). That is §2.7.
+
+## 5. Enemy — automatic firing + take damage
+
+The brief: `StartFiring()` uses an Awaitable delay (see the Shoot 'Em Up tab) and
+calls `Shoot()` every second WHILE the enemy is alive (no Update timer). `Shoot()`
+gets a bullet from the pool and sets the enemy as owner. `TakeDamage` reduces HP and
+calls `Die()` at 0.
+
+Our `Enemy` already has `Fire()` (no-op hook), `TakeDamage` (→ Despawn), `GetAimDirection`.
+Task 5 makes `Fire` a real delayed loop and adds owner+damage to its bullets:
+
+```csharp
+public class Enemy : SpaceObject, IDamageable
+{
+    private int health = 10;
+    // Task 5: an Enemy weapon (SOWeaponSpecs) — the SAME weapon system the player uses.
+    [SerializeField] private SOWeaponSpecs weapon;          // e.g. an "EnemyBasic" spec
+    [SerializeField] private float fireInterval = 1f;       // the brief: "sekunnin välein"
+
+    public void StartFiring()
+    {
+        // A delayed loop (the brief's Awaitable). If you have no Awaitable lib,
+        // the equivalent coroutine form is shown in dev-actions Q-T5-2.
+        // Loop while alive; each tick fires one bullet from the pool, owned by this enemy.
+        // (Q-T5-2: pick Awaitable vs coroutine.)
+    }
+
+    public void Shoot()
+    {
+        if (weapon?.BulletPrefab == null) return;
+        Bullet proto = weapon.BulletPrefab.GetComponent<Bullet>();
+        if (proto == null) return;
+
+        Bullet b = ApplicationController.Instance.ObjectPool.Get<Bullet>(proto);
+        if (b == null) return;
+        b.transform.position = transform.position + new Vector3(0f, -0.5f, 0f); // below the enemy
+        b.SetOwnerAndDamage(this, weapon.GetDamageForLevel(1));                  // owner = this enemy
+    }
+
+    public override void TakeDamage(int amount)   // (already virtual) — keep, but route death through Die()
+    {
+        health -= amount;
+        if (health <= 0) Die();                    // brief: "kutsuu tarvittaessa Die()"
+    }
+
+    public override void Die()
+    {
+        IsAlive = false;
+        // Stop firing + recycle to the pool instead of Destroy (Task 4).
+        ApplicationController.Instance.ObjectPool.Return(this);
+        Debug.Log("[Enemy] " + name + " died.");
+    }
+}
+```
+
+**Why (the brief's "Miksi?"):** "Ampuminen voidaan suorittaa ajastettuna ilman
+omaan Update()-ajastinta" — a delayed loop (Awaitable/coroutine) is cleaner than a
+per-enemy Update fire-timer; it self-terminates when the enemy dies. The bullet is
+the SAME class the player uses; the OWNER (this enemy) is what makes it an "enemy
+bullet" (rule 2.3).
+
+**NOTE on `Enemy.Die()` vs the pool:** because enemies are now POOLED, "dying" means
+`Return(this)` (recycle), NOT `Destroy`. The base `Despawn()` (Destroy) is still there
+for non-pooled objects (the player). This is the Task 4 ↔ Task 5 hand-off.
+
+## 6. Collectable + the enemy bullet prefab
+
+- `Collectable.Collect()`: the brief says it (for now, testing) logs + hides the
+  sprite. Ours already `Despawn()`s; make it a POOL `Return(this)` + hide (Q-T5-4).
+- **EnemyBulletBasic**: a NEW bullet prefab (the brief: "Tein … EnemyBulletBasic
+  prefabin (ja MovementParameters suuntana alas)"). It is the SAME `Bullet` script
+  with an enemy bullet movement SO (down) + enemy sprite. Add it to the pool list
+  (dev-actions C2) so `Enemy.Shoot()` can `Get` it. It is a DATA variant, not a new
+  class (rule 2.3/2.8).
+
+## 7. CameraHelper (Task 4/5 shared dependency — the brief references it)
+
+The brief's bullet recycling + enemy spawning both use `CameraHelper`:
+```csharp
+// Bullet: recycle when it leaves the camera view
+if (!CameraHelper.SpriteBoundsInCameraView(bullet.mainSpriteRenderer, Camera.main))
+    ApplicationController.Instance.ObjectPool.Return(this);
+
+// Enemy spawn: spread N enemies across the top of the camera
+enemy.transform.position = CameraHelper.GetSpawnPositionAbove(
+    enemy.mainSpriteRenderer, Camera.main, i, count);
+```
+This class does NOT exist yet (searched the project). Create it (pure C# static, §2.4):
+```csharp
+public static class CameraHelper
+{
+    public static bool SpriteBoundsInCameraView(SpriteRenderer sr, Camera cam) { /* WorldToViewport check */ }
+    public static Vector3 GetSpawnPositionAbove(SpriteRenderer sr, Camera cam, int index, int count) { /* spread across top */ }
+}
+```
+Ownership decision: see task-04/dev-actions Q-T4-5 (create it in Task 4 so Task 5 can
+use it — my DEFAULT).
+
+## 8. File layout (where each new/changed file lives)
+
+```
+MODIFIED (add members, do NOT rewrite — rule 2.1):
+  Assets/Scripts/GameObjects/SpaceObject.cs      +IsAlive, +Die() (virtual)
+  Assets/Scripts/GameObjects/Bullet.cs           +owner, +SetOwnerAndDamage, owner-based OnCollision, pool Return
+  Assets/Scripts/PlayerController.cs             Fire via pool + SetOwnerAndDamage, real TakeDamage/HP, OnCollision routing
+  Assets/Scripts/GameObjects/Enemy.cs            StartFiring/Shoot (owner+damage, pool), TakeDamage→Die, Die→pool Return
+  Assets/Scripts/GameObjects/Collectable.cs      Collect → pool Return + hide
+  Assets/Scripts/GameObjects/TestDummy.cs        (optional) route death/HP through the new Die()
+NEW:
+  Assets/Scripts/Helper/CameraHelper.cs          SpriteBoundsInCameraView + GetSpawnPositionAbove (pure C#, §2.4)
+NEW (Unity assets):
+  Assets/Prefabs/Bullets/EnemyBulletBasic.prefab  (Bullet script, enemy sprite, movement SO = down)
+  Assets/ScriptableObjects/Weapons/EnemyBasicWeaponSpecs (optional, for Enemy.Shoot)
+```
+
+## 9. The full hit chain (end-to-end, player kills an enemy)
+
+1. Player fires → `FireCurrentWeapon()` → `pool.Get<Bullet>(proto)` →
+   `b.SetOwnerAndDamage(player, dmg)` → owner = PLAYER.
+2. Bullet flies (Task 2). It overlaps an enemy → SpaceObject adapter →
+   `Bullet.OnCollision(enemy)`.
+3. `owner is PlayerController` true, `other is IDamageable` true →
+   `enemy.TakeDamage(dmg)`.
+4. Bullet is spent → `pool.Return(b)` (recycled, not destroyed).
+5. Enemy HP ≤ 0 → `enemy.Die()` → `pool.Return(enemy)` (recycled).
+6. Enemy touching the player (other order) → `PlayerController.OnCollision(enemy)` →
+   `TakeDamage(1)` → (at 0 HP) `Die()`.
+
+Symmetrically for enemy bullets: enemy `Shoot()` → owner = enemy → bullet hits
+player → `player.TakeDamage` → bullet returned.
+
+**Why no "combat manager" / event bus:** every step is an object acting on ITSELF
+or reading another's PUBLIC API (`TakeDamage`, `Collect`, `SetOwnerAndDamage`). The
+pool is a service on the existing controller. Adding a new combatant = implement
+`IDamageable` + set the bullet owner — zero changes to Bullet. Same separation as
+Tasks 1–4.
+
+## 10. Rule-compliance checklist (verify after implementing)
+
+**§2.1 fixed controllers keep names** — ✅ PlayerController + ApplicationController
+MODIFIED in place. No new "CombatController"/"CollisionManager".
+
+**§2.2 one script per object** — ✅ Bullet / PlayerController / Enemy each carry ONE
+script. No CollisionComponent/DamageComponent stacked on.
+
+**§2.3 types not tags** — ✅ `other is Collectable`, `owner is PlayerController`,
+`other is IDamageable`, `TryGetComponent`-equivalents. No tags, no CompareTag.
+
+**§2.4 MonoBehaviour only when necessary** — ✅ CameraHelper is plain C# static.
+Enemy firing uses Awaitable/coroutine (a Unity feature on an existing MonoBehaviour,
+justified — it IS the enemy).
+
+**§2.5 scene independence** — ✅ `Camera.main` is the only "scene" ref and it is the
+standard camera (acceptable); pool + SOs are Resources/assets. Boots from any scene.
+
+**§2.6 no repeated reference fetching** — ✅ owner cached on the bullet at spawn;
+pool lookups O(1); no per-frame Find/GetComponent.
+
+**§2.7 separation of responsibilities** — ✅ firing timing in the shooter; damage in
+the bullet (owner decides target); HP/death in the damaged object; pool = service.
+
+**§2.8 minimize Inspector** — ✅ enemy weapon/interval on the Enemy prefab or an SO
+asset; player HP on the player prefab; no per-type code branches.
+
+## 11. Acceptance criteria (all must be true — pairs with task-04 §10)
+
+1. Player fires → a POOLED bullet spawns (reused instance ID across shots), owner
+   logged as the player.
+2. A player bullet hitting an enemy reduces the enemy HP by the bullet's Damage;
+   the bullet is RETURNED (recycled), not destroyed.
+3. An enemy fires (StartFiring) → pooled enemy bullets, owner = that enemy, moving
+   DOWN (EnemyBulletBasic movement SO).
+4. An enemy bullet hitting the player reduces player HP; the bullet is returned.
+5. Enemy at 0 HP → `Die()` → returned to pool (recycled, Hierarchy count bounded).
+6. Player touching a Collectable → `Collect()` runs + collectable recycled/hidden.
+   Player touching an enemy → player takes damage.
+7. Player at 0 HP → `Die()` runs (the brief's death hook).
+8. `SpaceObject.Die()` exists and is virtual; `IsAlive` is false after death.
+9. Friendly-fire guard: a player bullet does NOT damage the player; an enemy bullet
+   does NOT damage another enemy.
+10. 30 s combat soak (player firing + enemies firing + kills) → Console CLEAN,
+    Hierarchy counts bounded (pool recycling works, no leaks).
+11. `enableTestSpawns` OFF + Play still boots clean (§2.5).

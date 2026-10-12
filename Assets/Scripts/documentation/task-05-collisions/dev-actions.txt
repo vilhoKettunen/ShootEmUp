@@ -1,0 +1,197 @@
+﻿# Task 5 — Collisions & Their Handling (by Types) · Dev Actions
+
+> The "what do I do / what's left" checklist. Tick items as they are completed.
+> STATUS: DESIGN STAGE (code NOT yet written). THIS IS THE LAST BIG TASK before the
+> autumn break. Work top to bottom; answer the Open Questions BEFORE the firing/death
+> wiring. Combined test plan + the DELIVERY checklist are in
+> ../IMPLEMENTATION-GUIDE-tasks-4-5.txt.
+
+## Teacher's brief (Finnish, summarized)
+
+- Simple 2D game: collisions have NO physics; the collider or the target (or both)
+  DIE. Handle in `OnTriggerEnter2D`; the essence is "which object touches which, and
+  how do we react" — done with TYPES (not tags), mostly `TryGetComponent`, plus `is`
+  where it fits (bullet).
+- FIRST check these are set up:
+  - 2D TRIGGER colliders on bullets, enemies, collectables.
+  - Trigger collisions require at least ONE of the pair to have a Rigidbody2D — in
+    this build the Rigidbody2D is on Bullets + Player.
+  - An EnemyBulletBasic prefab was made (movement = down); ADD it to the pool list
+    so enemy bullets can be fetched from the pool.
+- Then the code changes in these scripts:
+  - **PlayerController**: fires the active weapon (bullet from pool, owner=player,
+    weapon damage); `OnTriggerEnter2D` checks (TryGetComponent) Collectable →
+    `Collect()`, Enemy → player takes damage; `TakeDamage(amount)` reduces HP and
+    calls `Die()` at 0.
+  - **Enemy**: `StartFiring()` uses an Awaitable delay (see the Shoot 'Em Up tab) and
+    calls `Shoot()` every second while alive; `Shoot()` gets a bullet from the pool,
+    owner = enemy; `TakeDamage(amount)` reduces HP, calls `Die()` at 0.
+  - **Bullet**: `SetOwnerAndDamage(owner, damage)` stores owner + damage and RETURNS
+    this (chains after Get); `OnTriggerEnter2D` uses `is`: player's bullet damages
+    enemy, enemy's bullet damages player; after a hit the bullet returns to the pool.
+    (Same Bullet class for player AND enemy bullets — owner is the difference.)
+  - **Collectable + SpaceObject**: `Collectable.Collect()` logs + hides sprite (test);
+    `SpaceObject.Die()` sets IsAlive=false + logs; `Die()` is VIRTUAL for later
+    per-class death.
+- CLOSING: this is the last major addition before the autumn break. After it, the
+  game has its base "architecture" + core mechanics (partly test versions).
+  DELIVERY (next week, from the brief): finish all game tasks → return a BUILD that
+  runs without errors + an on-site code review presenting the key parts.
+
+## Current-code reality check (what EXISTS vs what the brief assumes)
+
+- [x] `SpaceObject` base + collision pipeline (OnTriggerEnter2D adapter + virtual
+      OnCollision) — EXISTS. We put the brief's type-checks in the EXISTING
+      OnCollision overrides (see code-changes §1), NOT new OnTriggerEnter2D per script.
+- [x] `Bullet.OnCollision` + `Damage` — EXIST. Task 5 adds OWNER + owner-based routing
+      + pool `Return` (instead of Despawn).
+- [x] `PlayerController.TakeDamage/Collect/OnCollision` — EXIST (log-only). Task 5
+      makes them REAL (HP + Die + proper routing).
+- [x] `Enemy.Fire()` (no-op) + `TakeDamage` (→ Despawn) — EXIST. Task 5 makes firing
+      a real delayed loop + owner/damage, and death routes through `Die()` + pool.
+- [ ] `SpaceObject.IsAlive` + `Die()` — NOT present. MUST be added (code-changes §2).
+- [ ] `Bullet.SetOwnerAndDamage` + `owner` — NOT present. MUST be added (code-changes §3).
+- [ ] `Enemy.StartFiring`/`Shoot` (owner+damage, Awaitable) — NOT present (code-changes §5).
+- [ ] `EnemyBulletBasic` prefab + its movement SO — NOT present. MUST be created (§6).
+- [ ] `CameraHelper` — NOT present. Needed by Task 4 recycling + enemy spawn (§7).
+- [ ] Rigidbody2D + Trigger colliders on the prefabs — VERIFY in the Editor (§8, C).
+- [ ] `Awaitable` — NOT in the project (searched). See Q-T5-2 (Awaitable vs coroutine).
+
+## ✅ Done
+
+- [x] Read the teacher's Task 5 brief + the two "what was added" diagrams
+      (PlayerController / Enemy / Bullet / Collectable / SpaceObject method lists +
+      the inheritance diagram).
+- [x] Confirmed Task 4 (Object Pool) is the dependency: bullets/enemies/collectables
+      now RECYCLE via pool.Return, so Task 5's "despawn" becomes "return to pool".
+- [x] Audited current SpaceObject/Bullet/PlayerController/Enemy/Collectable — located
+      the exact integration points (no IsAlive/Die yet; no owner yet; Fire is a no-op).
+- [x] Wrote code-changes-and-why.txt (full reference implementation + why) + this file.
+
+## ⬜ To do — in this order
+
+### A. Decide the design (BEFORE writing code)
+- [ ] **A1.** Review code-changes-and-why.txt §1–§11 (esp. §1 pipeline mapping,
+      §2 SpaceObject.IsAlive/Die, §3 Bullet owner, §5 Enemy firing, §7 CameraHelper).
+- [ ] **A2.** Answer Open Questions Q-T5-1 … Q-T5-5 (teacher).
+- [ ] **A3.** Lock the enemy weapon (EnemyBasicWeaponSpecs or a direct bullet prefab +
+      movement) and the player/enemy HP values.
+
+### B. Write the code (order: base → bullet → player → enemy → collectable)
+- [ ] **B1.** EXTEND `SpaceObject.cs`: add `IsAlive` (get;private) + `virtual Die()`
+      (code-changes §2). Keep IsActive/Activate/Deactivate/Despawn.
+- [ ] **B2.** EXTEND `Bullet.cs`: add `owner` + `SetOwnerAndDamage(owner,damage)`
+      (returns this) + rewrite `OnCollision` for owner-based routing + `pool.Return`
+      (code-changes §3). Ensure `ResetObject()` clears owner.
+- [ ] **B3.** EXTEND `PlayerController.cs`: `FireCurrentWeapon` via pool +
+      `SetOwnerAndDamage(this, dmg)`; real `TakeDamage` (HP + Die at 0); `OnCollision`
+      routing (Collectable/Enemy/Obstacle) (code-changes §4).
+- [ ] **B4.** EXTEND `Enemy.cs`: `StartFiring()` (delayed loop per Q-T5-2) + `Shoot()`
+      (pool + owner+damage) + `TakeDamage`→`Die` + `Die`→`pool.Return`
+      (code-changes §5).
+- [ ] **B5.** EXTEND `Collectable.cs`: `Collect()` → `pool.Return(this)` + hide
+      (code-changes §6). (Q-T5-4 on payload later.)
+- [ ] **B6.** (Q-T5-2) Add `CameraHelper.cs` (Helper) with
+      `SpriteBoundsInCameraView` + `GetSpawnPositionAbove` (pure C#, §2.4) and wire
+      Bullet's out-of-view recycle + enemy spawn to it.
+- [ ] **B7.** Build — zero errors/warnings; boot from Main scene (§2.5).
+- [ ] **B8.** Re-run the rule-compliance checklist (code-changes §10).
+- [ ] **B9.** Update roadmap / AGENTS code map (workflow rule 7).
+
+### C. Unity editor work (after B compiles)
+- [ ] **C1.** Verify TRIGGER colliders (Is Trigger ON) on: player, all enemy prefabs,
+      Bullet, EnemyBulletBasic, Collectables.
+- [ ] **C2.** Verify a Rigidbody2D (Gravity 0) exists on at least one of each colliding
+      pair — per the brief, on Bullets + Player. (EnemyBulletBasic needs one too.)
+- [ ] **C3.** Create `EnemyBulletBasic` prefab (Bullet script + enemy sprite +
+      BoxCollider2D Trigger + Rigidbody2D) + its movement SO (direction DOWN), and
+      add it to the SOPoolSpaceObjects list (Task 4, C2).
+- [ ] **C4.** (Q-T5-1) Create `EnemyBasicWeaponSpecs` (SO) with EnemyBulletBasic as
+      its bullet + assign it to the Enemy prefab(s); OR point Enemy.Shoot at the
+      EnemyBulletBasic prefab + its movement SO directly.
+- [ ] **C5.** Set player `hitPoints` (default 3) on the PlayersShip prefab; enemy
+      `weapon` + `fireInterval` (default 1 s) on enemy prefabs.
+- [ ] **C6.** Play-Mode combat matrix (all must pass — see code-changes §11 + the
+      combined guide Test section).
+
+## 📋 Open Questions (for the teacher — PENDING, fill in your answers)
+
+- **Q-T5-1.** Enemy weapon source. Options:
+  (a) a NEW `EnemyBasicWeaponSpecs` SO (reuses the Task 3 weapon system: bullet prefab
+      + movement + damage + fireInterval) — my DEFAULT, most consistent;
+  (b) the Enemy holds a plain `bulletPrefab` + `bulletMovement` + `damage` field
+      (simpler, but a parallel to the weapon SO);
+  (c) something else.
+  ANSWER: ______________________________
+  A) create new EnemyBasicWeaponSpecs SO (bullet prefab + movement + damage + fireInterval) and assign it to the Enemy prefab(s).
+
+- **Q-T5-2.** `StartFiring()` mechanism. The brief says "Awaitable-viivettä (ks. Shoot
+  'Em Up -välilehti)". `Awaitable` is NOT in our project. Options:
+  (a) add an Awaitable-style helper (Kryz.Tweening already has Awaitable/WaitFor in
+      the template — confirm the API name and use it) — matches the brief;
+  (b) a standard coroutine: `yield return new WaitForSeconds(1)` loop, started in
+      Init/Activate, stopped on death — simplest, no new dependency.
+  My DEFAULT is (b) UNLESS the template's Awaitable is trivial to call; then (a).
+  ANSWER: ______________________________
+  A) use the available Awaitable-style helper (Kryz.Tweening) if it is trivial to call; otherwise, use a standard coroutine.
+
+- **Q-T5-3.** Friendly fire. Should a player bullet be GUARDED against damaging the
+  player (and enemy bullet against another enemy)? My DEFAULT: yes — add the
+  `!(other is PlayerController)` / `!(other is Enemy)` guards in Bullet.OnCollision.
+  Confirm?
+  ANSWER: ______________________________
+  yes friendly fire turned off for now, add the guards in Bullet.OnCollision.
+
+- **Q-T5-4.** Player death + Collectable payload.
+  (a) Player `Die()` = log + (for now) Despawn/destroy the player (lives/respawn =
+      later);
+  (b) Player `Die()` = just mark dead (IsAlive=false) + stop input (lives = later).
+  And Collectable: for now `Collect()` = log + hide + pool Return; the actual payload
+  (weapon switch / level up) = a LATER task (per the roadmap). Confirm both "test-only
+  for now"?
+  ANSWER: ______________________________
+  B) but with some slight changes
+  such as when a player dies it should also make a debug log that says "Player has died" and when a collectable is collected it should also make a debug log that says more details about the collected item like
+  the type of collectable and any other relevant information. like what it would have done (weapon switch / level up) if it was implemented.)
+
+- **Q-T5-5.** Contact damage VALUES. Player-enemy and obstacle contact currently use a
+  placeholder `1`. Should per-enemy contact damage come from the enemy's own data (an
+  SO field) in THIS task, or stay a placeholder until the data-driven enemy task?
+  My DEFAULT: keep placeholder 1 now (data-driven enemy stats = later).
+  ANSWER: ______________________________
+  yes keep placeholder 1 now 
+
+## 🎯 Scope — DONE in this task (strict)
+
+IN (must all work by the end of Task 5):
+1. `SpaceObject.IsAlive` + virtual `Die()`.
+2. `Bullet` owner + `SetOwnerAndDamage` (returns this) + owner-based hit routing +
+   pool `Return`.
+3. PlayerController fires via pool with owner/damage; real `TakeDamage`/HP/`Die`;
+   OnCollision routing (Collectable/Enemy/Obstacle).
+4. Enemy `StartFiring` (delayed loop) + `Shoot` (owner=enemy) + `TakeDamage`→`Die`.
+5. `Collectable.Collect` (test) + `EnemyBulletBasic` prefab in the pool.
+6. A full combat loop (fire → hit → damage → die → recycle) that is console-clean and
+   leak-free.
+
+NOT DONE in this task (do NOT build these now):
+- ❌ Player lives/respawn/invulnerability (Die is a hook; the death flow = later).
+- ❌ Real Collectable payloads (weapon switch / level-up = later task).
+- ❌ Wave/spawn SCHEDULING, boss, scoring, UI for HP (HUD shows weapon/level/dummy).
+- ❌ Per-enemy data-driven damage/HP tables (placeholder values for now, Q-T5-5).
+- ❌ Physics (no Rigidbody physics — triggers only, per the brief).
+
+AVOID (anti-goals):
+- ❌ A "CollisionManager"/"CombatSystem" singleton (each object owns its own logic — §2.7).
+- ❌ Adding a 2nd script to any object for collision (rule 2.2).
+- ❌ Using tags to tell player/enemy bullets apart (rule 2.3 — use the owner type).
+- ❌ `Object.Destroy` on a POOLED bullet/enemy/collectable (use pool.Return — Task 4).
+
+## 🚩 Assumptions (pending answers — safe defaults used in the design)
+
+- Tasks 1–4 are complete and working (SpaceObject + movement + weapons + POOL).
+  Task 5 REUSES the pool (Return) and the weapon system (SOWeaponSpecs) and adds
+  owner/damage + the death hooks. It does NOT change the rules of Tasks 1–4.
+- The pooled prefabs (Vulture/Falcon/TestDummy/Bullet/EnemyBulletBasic) all have the
+  trigger collider + Rigidbody2D setup (C1–C2).
+- `Camera.main` exists in the Main scene (the only "scene" reference — acceptable).

@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 37946496ede1d814e9ad5f084b0446bc, type: 3}
+  m_Name: PoolSpaceObjects
+  m_EditorClassIdentifier: Assembly-CSharp::SOPoolSpaceObjects
+  poolObjects:
+  - prefab: {fileID: 3911284158991931837, guid: ce1a7aa52a9c6174a82091c790ebeff7, type: 3}
+    initialSize: 20
+  - prefab: {fileID: 3911284158991931837, guid: 365f3ab1d430f6a4aa80fe7ee8276876, type: 3}
+    initialSize: 20
+  - prefab: {fileID: 9044448607419390467, guid: c74d1fb59f9dc3745a7e34334d239234, type: 3}
+    initialSize: 10
+  - prefab: {fileID: 9044448607419390467, guid: 1bc6f7399b041b848b01607054443b50, type: 3}
+    initialSize: 10
+  - prefab: {fileID: 9044448607419390467, guid: 0aac8981204b8574fa710389e32cdfb5, type: 3}
+    initialSize: 1

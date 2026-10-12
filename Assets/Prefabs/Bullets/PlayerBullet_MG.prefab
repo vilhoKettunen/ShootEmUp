@@ -180,3 +180,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2e43cb5a455bf4247bbbd667bb6a5ffa, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Bullet
+  movementParameters: {fileID: 11400000, guid: 77b26cc0edc6c1040ab19e8a917af6c5, type: 2}
+  defaultDamage: 1

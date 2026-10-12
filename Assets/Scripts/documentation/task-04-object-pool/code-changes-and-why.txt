@@ -1,0 +1,434 @@
+﻿# Task 4 — Object Pool · Code Changes & Why
+
+> The "what changes and why" view. STATUS: DESIGN STAGE (code NOT yet written).
+> This folder is the DESIGN + WHAT-TO-DO for Task 4. To drive the actual
+> implementation, work dev-actions.txt top to bottom and answer its Open
+> Questions (Q-T4-1 … Q-T4-6). Cross-task notes + the combined test plan live in
+> ../IMPLEMENTATION-GUIDE-tasks-4-5.txt.
+
+## 0. What this task is (and is NOT)
+
+IN — a fully dynamic, generic Object Pool that:
+- keeps reusable game objects ALIVE in memory and recycles them instead of
+  Instantiate/Destroy churning (the brief's core goal), and
+- gives ONE central, type-safe entry point to create ("Get") and remove
+  ("Return") enemies, bullets, collectables, etc.
+- is driven by DATA (a ScriptableObject list of prefabs + sizes), so adding a new
+  poolable prefab type = add ONE list entry, ZERO code changes (the brief:
+  "pooliin kelpaavat kaikki SpaceObject-luokasta periytyvät prefabit").
+
+NOT in this task (see dev-actions §Scope):
+- ❌ The actual collision/owner/enemy-firing logic (that is Task 5).
+- ❌ Wave/spawn scheduling, boss, scoring, UI.
+- ❌ A unique-ID / named lookup API (the brief itself flags the "index is ugly"
+  problem and defers it — we keep the brief's prefab-reference API for now).
+
+## 1. The three new classes (matches the brief exactly)
+
+```
+Data (ScriptableObject — designer edits):
+    SOPoolSpaceObjects : ScriptableObject
+        └ List<PoolEntry> poolObjects        (which prefabs, how many at start)
+
+Helper (serializable, NO MonoBehaviour):
+    PoolEntry : [Serializable]
+        ├ SpaceObject prefab                 (the prefab to pool — a COMPONENT ref)
+        └ int initialSize = 10               (how many to pre-instantiate)
+
+Plain C# (NO MonoBehaviour — rule 2.4):
+    ObjectPool
+        ├ Dictionary<SpaceObject, Queue<SpaceObject>> pools          (prefab → queue)
+        ├ Dictionary<SpaceObject, SpaceObject>        objectPrefabs   (instance → prefab)
+        ├ Register<T>(T prefab, int initialSize) where T : SpaceObject
+        ├ Get<T>(T prefab)             where T : SpaceObject
+        └ Return<T>(T obj)             where T : SpaceObject
+```
+
+**Why this shape (compared to the brief):**
+- The brief's diagram shows EXACTLY `Dictionary<SpaceObject, Queue<SpaceObject>>`
+  (Prefab → Queue of instances) + `Dictionary<SpaceObject, SpaceObject>`
+  (Object → Prefab). We reproduce both, for the same two reasons the brief gives:
+  the first map is the pool itself; the second map lets `Return(obj)` find WHICH
+  queue an instance belongs to without asking the caller.
+- `PoolEntry` is `[Serializable]` (a plain data class) ONLY so it can be a list
+  element on the ScriptableObject and be editable in the Inspector — this is the
+  brief's "apuluokka … saada SOPoolSpaceObjectiin editorissa täytettävä lista".
+- `SOPoolSpaceObjects` is a ScriptableObject = the pool's CONFIG AS A DATA ASSET
+  (rule 2.8). One instance is created in the Editor (the brief: "tarvitaan pelissä
+  oikeastaan vain yksi"). Adding a new poolable type = add a list row, no C# change.
+- `ObjectPool` is plain C# (no MonoBehaviour) — it holds no Unity lifecycle; it is
+  created once and owned by ApplicationController (the existing §2.1 controller).
+  Making it a MonoBehaviour would violate rule 2.4.
+
+## 2. The KEY design decision: prefab references are COMPONENT references
+
+The brief's pool is typed around `SpaceObject` (a component), NOT GameObject:
+- `PoolEntry.prefab` is `SpaceObject`.
+- `Get<T>(T prefab)`, `Return<T>(T obj)`, `Register<T>(T prefab)` are all
+  component-typed, constrained `where T : SpaceObject`.
+- `Object.Instantiate(prefab)` where `prefab` is a Component returns a new
+  COMPONENT of the same type — so `T obj = Object.Instantiate(prefab)` needs NO
+  `GetComponent<>` and no cast. This is why the brief's code is so clean.
+
+**Why component refs (and not our current GameObject refs):**
+- Our Task 2/3 code currently stores `GameObject` prefabs (e.g.
+  `SOWeaponSpecs.bulletPrefab` is a `GameObject`) and resolves the component at
+  spawn with `GetComponent<Bullet>()`. The pool inverts that: it stores the
+  COMPONENT, so `Get<Bullet>(bulletComponent)` returns a ready `Bullet` directly.
+- The Inspector still lets you "pick a prefab" — a `SpaceObject`-typed field binds
+  to the prefab's SpaceObject component (Bullet / Enemy / Vulture / TestDummy /
+  Collectable / Obstacle). So the Editor UX is unchanged; the type system is just
+  tighter (rule 2.3 "types not tags" at its strongest).
+
+**How this reconciles with the existing GameObject-based weapon SO (Q-T4-6):**
+We do NOT force `SOWeaponSpecs.bulletPrefab` to change in THIS task. The bridge is
+one line at the call site: resolve the weapon's bullet prefab to its `Bullet`
+component, then hand THAT to the pool. This keeps Task 3's SO asset untouched
+(rule 2.1 "don't churn working code") while still using the pool. See §6.
+
+## 3. SpaceObject MUST gain two pool lifecycle hooks
+
+The brief's pool calls, on every Get/Return:
+```csharp
+obj.Init();          // Get:  "initialize it's behaviour e.g. start movement, shooting, first animation"
+obj.ResetObject();   // Return: "reset e.g. timers, animations or other behaviours that need to stop"
+```
+Our current `SpaceObject` has `IsActive` / `Activate()` / `Deactivate()` /
+`Despawn()` but NOT `Init()` / `ResetObject()`. So the pool needs them.
+
+### 3.1 Add to SpaceObject (the exact additions)
+
+```csharp
+// ---- Task 4 additions: the pool's two lifecycle hooks ----
+
+/// <summary>
+/// Pool "Get" hook: make this object ready-for-use and active again.
+/// Default just flips the shared state; subclasses override to also re-arm their
+/// OWN per-object state (reset elapsed, re-cache spawnOrigin, reset Damage/HP,
+/// (re)start firing, reposition). Called by ObjectPool.Get, never by game code.
+/// </summary>
+public virtual void Init()
+{
+    IsActive = true;
+}
+
+/// <summary>
+/// Pool "Return" hook: stop + reset per-object behaviour BEFORE the pool deactivates
+/// it (stop firing loops, reset timers/elapsed, clear one-shot state). Called by
+/// ObjectPool.Return, never by game code.
+/// </summary>
+public virtual void ResetObject()
+{
+    // default: no object-specific reset
+}
+```
+
+**Why these two (and why they coexist with Activate/Deactivate):**
+- `Init()` / `ResetObject()` are the brief's canonical names — the teacher will
+  expect them in code review. They are the pool-facing entry points.
+- `IsActive` stays as the single source of truth for "is this object live".
+  `Init()` sets it true; `ResetObject()` prepares it to go false (the pool then
+  does `SetActive(false)`).
+- `Activate()` / `Deactivate()` / `Despawn()` REMAIN: `Despawn()` is still the
+  "permanently destroy" path for NON-pooled objects (e.g. the player dying), and
+  `Activate()`/`Deactivate()` are thin state helpers if you ever need them.
+
+### 3.2 What each of OUR objects overrides (the concrete work)
+
+| Class          | `Init()` (Get)                                              | `ResetObject()` (Return)                            |
+|----------------|-------------------------------------------------------------|-----------------------------------------------------|
+| `Bullet`       | `elapsed=0; spawnOrigin=transform.position; IsActive=true;` (read its own serialized movement) | `IsActive=false;` (optional: clear one-shot state) |
+| `Enemy`        | `health=StartHealth; elapsed=0; spawnOrigin=transform.position; start firing; IsActive=true;` | `stop firing; IsActive=false;` |
+| `EnemyVulture` | (inherited) — sets its movement SO from the prefab          | (inherited)                                         |
+| `EnemyFalcon`  | (inherited)                                                 | (inherited)                                         |
+| `TestDummy`    | `currentHealth=StartHealth; IsActive=true;` (immortal reset)| `IsActive=false;`                                   |
+| `Collectable`  | `IsActive=true;` (re-show sprite)                           | `IsActive=false;` (hide sprite)                     |
+| `Obstacle`     | `IsActive=true;`                                            | `IsActive=false;`                                   |
+
+> NOTE the interaction with Task 2/3 "injected SO" design: for the pool's no-arg
+> `Init()` to work, each pooled prefab must CARRY its config on the prefab
+> (serialize `SOMovementParameters` + default damage on Bullet/Enemy) instead of
+> (or in addition to) the current spawn-time injection. This is Q-T4-1 below — it
+> is the single biggest integration decision of Task 4.
+
+## 4. ObjectPool — concrete reference implementation
+
+```csharp
+using System.Collections.Generic;
+using UnityEngine;
+
+/// <summary>
+/// Fully dynamic, generic object pool (plain C#, rule 2.4). Keyed by the
+/// SpaceObject PREFAB (a component reference). Dictionary + Queue, exactly as
+/// the brief's diagram. Owned by ApplicationController (existing singleton).
+/// </summary>
+public class ObjectPool
+{
+    // prefab (registered SpaceObject component) -> its queue of pooled instances
+    private readonly Dictionary<SpaceObject, Queue<SpaceObject>> pools = new();
+    // instance -> the prefab it was created from (lets Return find the right queue)
+    private readonly Dictionary<SpaceObject, SpaceObject> objectPrefabs = new();
+
+    /// <summary>Pre-fill a pool for one prefab type (called once per SOPoolSpaceObjects entry).</summary>
+    public void Register<T>(T prefab, int initialSize = 10) where T : SpaceObject
+    {
+        if (prefab == null) return;
+        if (pools.ContainsKey(prefab))
+        {
+            Debug.LogWarning("[ObjectPool] Prefab '" + prefab.name +
+                "' registered more than once — check your SOPoolSpaceObjects list for duplicates.");
+            return;
+        }
+
+        Queue<SpaceObject> queue = new Queue<SpaceObject>();
+        for (int i = 0; i < initialSize; i++)
+        {
+            T obj = Object.Instantiate(prefab);      // prefab is a COMPONENT -> returns a component
+            obj.gameObject.SetActive(false);
+            queue.Enqueue(obj);
+            objectPrefabs.Add(obj, prefab);
+        }
+        pools.Add(prefab, queue);
+    }
+
+    /// <summary>Take one active instance of `prefab` (dequeue, or grow the pool if empty).</summary>
+    public T Get<T>(T prefab) where T : SpaceObject
+    {
+        if (prefab == null) return null;
+        if (!pools.TryGetValue(prefab, out Queue<SpaceObject> queue))
+        {
+            Debug.LogError("[ObjectPool] Prefab '" + prefab.name +
+                "' is NOT registered — add it to SOPoolSpaceObjects and run InitObjectPool().");
+            return null;
+        }
+
+        T obj;
+        bool wasNew = false;
+        if (queue.Count > 0)
+        {
+            obj = (T)queue.Dequeue();                 // reuse a recycled instance
+        }
+        else
+        {
+            obj = Object.Instantiate(prefab);          // pool exhausted -> grow it
+            wasNew = true;
+        }
+        if (obj == null) return null;
+        if (wasNew) objectPrefabs.Add(obj, prefab);
+
+        obj.gameObject.SetActive(true);
+        obj.Init();                                     // SpaceObject hook: make ready/active
+        return obj;
+    }
+
+    /// <summary>Recycle an instance back to its pool (reset + deactivate + enqueue).</summary>
+    public void Return<T>(T obj) where T : SpaceObject
+    {
+        if (obj == null) return;
+        if (!objectPrefabs.TryGetValue(obj, out SpaceObject prefab))
+        {
+            Debug.LogWarning("[ObjectPool] '" + obj.name +
+                "' was returned but was never created from a registered prefab — skipping.");
+            return;
+        }
+
+        obj.ResetObject();                              // SpaceObject hook: stop/reset behaviour
+        obj.gameObject.SetActive(false);
+        pools[prefab].Enqueue(obj);
+    }
+}
+```
+
+**Why the Get/Return internals are shaped this way:**
+- `Get` dequeues from the FRONT (FIFO) and, if the queue is empty, instantiates a
+  fresh one and grows the pool — so a burst of spawns never blocks (the brief:
+  "kun objekti halutaan aktivoida … se poimitaan jonon kärjestä (Dequeue)").
+- `Return` uses the `objectPrefabs` map to find the owning queue (the brief:
+  the second dictionary "Object → Prefab"), then `ResetObject()` + `SetActive(false)`
+  + `Enqueue` (the brief: "lisätään taas jonon perälle (Enqueue)").
+- Duplicate-`Register` guard + not-registered `Get` error + unknown `Return`
+  warning: all the defensive logs in the brief's screenshot are kept — they make
+  the "I forgot to add a prefab to the list" failure mode obvious in the Console.
+
+## 5. PoolEntry + SOPoolSpaceObjects (the data side)
+
+```csharp
+using System;
+using UnityEngine;
+
+/// <summary>One poolable prefab + how many to pre-instantiate. [Serializable]
+/// so it can be a row in SOPoolSpaceObjects and edited in the Inspector.</summary>
+[Serializable]
+public class PoolEntry
+{
+    /// <summary>The prefab to pool. A SpaceObject COMPONENT reference — the
+    /// Inspector binds it to the prefab's Bullet/Enemy/Collectable/... component.</summary>
+    public SpaceObject prefab;
+    public int initialSize = 10;
+}
+```
+
+```csharp
+using System.Collections.Generic;
+using UnityEngine;
+
+/// <summary>The pool CONFIG as a data asset (rule 2.8). One instance per game.
+/// Adding a new poolable type = add a row here, ZERO C# changes.</summary>
+[CreateAssetMenu(fileName = "PoolSpaceObjects", menuName = "Game/Pool Space Objects", order = 3)]
+public class SOPoolSpaceObjects : ScriptableObject
+{
+    [SerializeField] private List<PoolEntry> poolObjects = new List<PoolEntry>();
+    public IReadOnlyList<PoolEntry> PoolObjects => poolObjects;   // read-only (rule 2.7)
+}
+```
+
+**Why a list of `PoolEntry` and not a flat pair of lists:** the brief wants each
+prefab to have its OWN `initialSize` (e.g. 10 enemies vs 20 bullets). `PoolEntry`
+bundles prefab+size per row so the Inspector is a clean table (the brief's
+screenshot: "Enemy StraightJet 10 / Player Bullet 20 …").
+
+## 6. Wiring into ApplicationController (the existing §2.1 controller)
+
+The brief loads the asset once and registers every entry. Add to our
+`ApplicationController` (MODIFY in place — rule 2.1, never rename):
+
+```csharp
+// ---- Task 4 additions (pool) ----
+[HideInInspector] public SOPoolSpaceObjects PoolSpaceObjects;
+[HideInInspector] public ObjectPool ObjectPool = new ObjectPool();
+
+public void Init()
+{
+    // existing: ui = Instantiate(Resources.Load("UI"))...
+    // existing: player = Instantiate<PlayerController>(Resources.Load<PlayerController>("PlayersShip"));
+
+    // NEW: load the pool config asset, then pre-instantiate each prefab type.
+    PoolSpaceObjects = Resources.Load<SOPoolSpaceObjects>("PoolSpaceObjects");
+    if (PoolSpaceObjects == null)
+    {
+        Debug.LogError("[ApplicationController] 'PoolSpaceObjects' SOPoolSpaceObjects asset not found in a Resources folder.");
+        return;
+    }
+    InitObjectPool();
+}
+
+private void InitObjectPool()
+{
+    foreach (PoolEntry entry in PoolSpaceObjects.PoolObjects)
+    {
+        ObjectPool.Register(entry.prefab, entry.initialSize);
+    }
+}
+```
+
+**Why here:** the brief literally shows `PoolSpaceObjects` + `ObjectPool` +
+`InitObjectPool()` on the ApplicationController, loaded from a Resources folder.
+ApplicationController already is the singleton that spawns the player (our code) —
+so it is the natural owner of the pool service (rule 2.7: the object asks the
+pool; the pool is a single service, not scattered).
+
+### 6.1 Firing a bullet THROUGH the pool (the bridge — keeps Task 3 SO intact)
+
+Current `PlayerController.FireCurrentWeapon()` does `Instantiate(GameObject)` +
+`GetComponent<Bullet>()` + `bullet.Init(so, dmg)`. With the pool (Q-T4-6 bridge):
+
+```csharp
+// resolve the weapon's bullet PREFAB (a GameObject) to its Bullet COMPONENT,
+// then ask the pool for a ready Bullet:
+Bullet proto = currentWeapon.BulletPrefab != null ? currentWeapon.BulletPrefab.GetComponent<Bullet>() : null;
+if (proto == null) { Debug.LogError("...bullet prefab has no Bullet component..."); return; }
+
+Bullet b = ApplicationController.Instance.ObjectPool.Get<Bullet>(proto);
+if (b == null) return;
+b.transform.position = transform.position + new Vector3(currentWeapon.SpawnOffset.x, currentWeapon.SpawnOffset.y, 0f);
+// (Task 5 will replace this with SetOwnerAndDamage(this, damage). For Task 4: set damage if needed.)
+```
+
+**Why this bridge and not a type change:** it reuses the brief's component-based
+`Get<Bullet>(...)` API without touching `SOWeaponSpecs.bulletPrefab` (a GameObject).
+If you later answer Q-T4-6 with "change the SO to a SpaceObject field", this line
+simplifies to `ObjectPool.Get<Bullet>(currentWeapon.BulletPrefab)` — nothing else
+moves. That is the "easily extendable" goal in action.
+
+## 7. The full spawn/recycle chain (end-to-end)
+
+1. **Boot**: `ApplicationController.Init()` → load `PoolSpaceObjects` asset →
+   `InitObjectPool()` → `Register(prefab, n)` for every row → each prefab type has
+   `n` inactive instances queued.
+2. **Spawn a bullet**: `Get<Bullet>(bulletProto)` → dequeue one (or grow),
+   `SetActive(true)`, `bullet.Init()` (reset elapsed/spawnOrigin/ready) → returns
+   a live Bullet. Caller sets position (+ later: owner/damage).
+3. **Use it**: bullet flies (Task 2 movement). 
+4. **Recycle it**: when it leaves the camera view (Task 5's
+   `CheckVisibilityInCamera` using `CameraHelper`) or hits something →
+   `ObjectPool.Return(b)` → `bullet.ResetObject()`, `SetActive(false)`, back to queue.
+5. **Spawn an enemy** (brief's `SpawnTestEnemies`, adapted to OUR roster):
+   `Get<Enemy>(vultureProto)` → position via `CameraHelper.GetSpawnPositionAbove(...)` →
+   enemy's `Init()` starts its movement + firing (Task 5).
+
+**Why this works without a "SpawnManager":** every step is an object acting on
+itself (bullet resets itself) or reading a public service (the pool, via the
+existing ApplicationController singleton). No new global brain, no events — same
+"react to the other, act on yourself" etiquette as Tasks 1–3.
+
+## 8. The brief's known limitation (acknowledge, don't fix yet)
+
+The brief itself says: getting a prefab "through
+`PoolSpaceObjects.PoolObjects[joku_indeksi]`" is not intuitive and a **unique ID**
+would be better. We KEEP the prefab-reference API in THIS task (it matches the
+brief and is type-safe), and we list the ID-based API as an EXPLICIT non-goal /
+future extension (dev-actions §Scope). Do not build the ID system now.
+
+## 9. Rule-compliance checklist (verify after implementing)
+
+**§2.1 fixed controllers keep names** — ✅ ApplicationController MODIFIED in place
+(gains PoolSpaceObjects + ObjectPool + InitObjectPool). No rename, no new controller.
+ObjectPool is a service, not a controller — it does not steal the controller's duties.
+
+**§2.2 one script per object** — ✅ Each pooled prefab still carries exactly ONE
+SpaceObject-derived script (Bullet / EnemyVulture / ...). PoolEntry + SOPoolSpaceObjects
++ ObjectPool are NOT attached to any GameObject.
+
+**§2.3 types not tags** — ✅ `where T : SpaceObject` constraints + component refs.
+No tags, no string lookups, no `CompareTag`.
+
+**§2.4 MonoBehaviour only when necessary** — ✅ ObjectPool + PoolEntry are plain C#
+(no MonoBehaviour). SOPoolSpaceObjects is a ScriptableObject (data).
+
+**§2.5 scene independence** — ✅ The pool asset is loaded from a Resources folder
+and owned by the existing singleton; no scene lookups. Boots from any scene.
+
+**§2.6 no repeated reference fetching** — ✅ pools are cached once at Register;
+Get/Return are O(1) dictionary/queue ops; no per-frame Find/GetComponent.
+
+**§2.7 separation of responsibilities** — ✅ pool CONFIG in SOPoolSpaceObjects
+(data), pool LOGIC in ObjectPool (service), per-object reset in each object's
+`Init()`/`ResetObject()` (the object owns its own state).
+
+**§2.8 minimize Inspector** — ✅ ALL pool tuning (which prefabs, how many) lives in
+the SOPoolSpaceObjects asset. No per-type code branches in ObjectPool.
+
+## 10. Acceptance criteria (all must be true)
+
+1. `ObjectPool` compiles as plain C# — NO MonoBehaviour, NO Update/Transform/Time.
+2. `PoolEntry` compiles and appears as an editable row on the SOPoolSpaceObjects
+   asset (Inspector shows `prefab` + `initialSize`).
+3. `SOPoolSpaceObjects` compiles as a ScriptableObject with `[CreateAssetMenu]`
+   ("Game/Pool Space Objects") and a `poolObjects` list.
+4. `SpaceObject` gains `Init()` + `ResetObject()` virtuals; existing
+   `IsActive`/`Activate`/`Deactivate`/`Despawn` still compile.
+5. In Play Mode: the Console shows one `[ObjectPool]`-clean boot (no "not
+   registered" errors) after `InitObjectPool()`.
+6. `Get<Bullet>(proto)` returns a NON-null, ACTIVE Bullet (its `gameObject.activeSelf`
+   true) and `IsActive` true; calling it 100× faster than `initialSize` still
+   succeeds (pool grows) with no errors.
+7. `Return(b)` deactivates the Bullet (activeSelf false, IsActive false) and the
+   next `Get` returns a REUSED instance (verify by logging `b.GetInstanceID()`
+   before Return and after Get — same ID when the queue is non-empty).
+8. Registering the same prefab twice logs the duplicate warning and does NOT
+   double-fill the pool.
+9. A prefab NOT in the list → `Get` logs the "not registered" error and returns
+   null (no crash).
+10. Console CLEAN over a 30 s spawn/recycle loop (spawn 50 bullets, recycle 50) —
+    no leaks (object count in the Hierarchy stays bounded), no red/yellow lines.
+11. `enableTestSpawns` OFF + Play still boots with zero errors (§2.5).

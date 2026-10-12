@@ -1,0 +1,242 @@
+﻿# IMPLEMENTATION GUIDE — Tasks 4 (Object Pool) & 5 (Collisions)
+
+> STATUS: CODE DONE ✅ — All C# for Tasks 4 & 5 is implemented and the build
+> compiles clean. What remains is the **Unity Editor asset work** (prefabs,
+> ScriptableObject asset, collider/Rigidbody setup) + the **Play-Mode test
+> matrix**. Read this doc for the exact checklist of what to verify.
+>
+> Per-task detail lives in:
+>   - Assets/Scripts/documentation/task-04-object-pool/   (3 docs)
+>   - Assets/Scripts/documentation/task-05-collisions/      (3 docs)
+
+## 0. The big picture (what Tasks 4 + 5 add on top of 1–3)
+
+```
+Task 1  SpaceObject base + IDamageable + collision pipeline + Player/Enemy/Collectable
+Task 2  Movement (MovementPatterns + SOMovementParameters) + Bullet + test enemies
+Task 3  Weapons (SOWeaponSpecs + Weapon) + Bullet damage/collision + HUD
+        |
+        v
+Task 4  OBJECT POOL — recycle objects instead of Instantiate/Destroy
+        |   (ObjectPool + PoolEntry + SOPoolSpaceObjects + SpaceObject.Init/ResetObject)
+        v
+Task 5  COLLISIONS & HANDLING — bullets know their OWNER, damage by type, enemies fire,
+        |   player takes damage, SpaceObject.Die(); bullets/enemies/collectables RECYCLE via pool
+        v
+        DONE (before autumn break) — base architecture + core mechanics in place
+```
+
+The key relationship: **Task 5 REUSES Task 4.** Once the pool exists, "a bullet hits
+something / goes off-screen" becomes `pool.Return(bullet)` instead of `Destroy`. And
+"an enemy dies" becomes `pool.Return(enemy)`.
+
+## 1. ORDER OF WORK — STATUS
+
+| Step | What | Where | Status |
+|------|------|-------|--------|
+| 4.1  | `SpaceObject.Init()` + `ResetObject()` virtuals | task-04/code-changes §3 | ✅ |
+| 4.2  | `PoolEntry` + `SOPoolSpaceObjects` | task-04/code-changes §5 | ✅ |
+| 4.3  | `ObjectPool` (Register/Get/Return) | task-04/code-changes §4 | ✅ |
+| 4.4  | Per-object `Init`/`ResetObject` overrides | task-04/code-changes §3.2 | ✅ |
+| 4.5  | ApplicationController loads asset + registers | task-04/code-changes §6 | ✅ |
+| 4.6  | PlayerController fires through the pool (bridge) | task-04/code-changes §6.1 | ✅ |
+| 4.7  | Build + test the pool in isolation | task-04/code-changes §10 | ✅ build / ⬜ play-test |
+| 5.1  | `SpaceObject.IsAlive` + `Die()` | task-05/code-changes §2 | ✅ |
+| 5.2  | `Bullet` owner + `SetOwnerAndDamage` + pool Return | task-05/code-changes §3 | ✅ |
+| 5.3  | PlayerController real damage/HP/Die + routing | task-05/code-changes §4 | ✅ |
+| 5.4  | Enemy `StartFiring`/`Shoot` + Die→pool | task-05/code-changes §5 | ✅ |
+| 5.5  | Collectable `Collect` + EnemyBulletBasic prefab | task-05/code-changes §6 | ✅ code / ⬜ prefab |
+| 5.6  | `CameraHelper` (SpriteBoundsInCameraView + GetSpawnPositionAbove) | task-05/code-changes §7 | ✅ |
+| 5.7  | Build + full combat test | task-05/code-changes §11 | ✅ build / ⬜ play-test |
+
+## 2. CODE FILES — WHAT WAS CREATED / MODIFIED
+
+### 2.1 NEW files
+
+| File | What | Notes |
+|------|------|-------|
+| `Assets/Scripts/Logic/ObjectPool.cs` | The pool: `Register<T>`/`Get<T>`/`Return<T>`, two dictionaries | Plain C# (no MonoBehaviour) |
+| `Assets/Scripts/GameObjects/PoolEntry.cs` | `[Serializable]` row: `SpaceObject prefab` + `int initialSize` | Data class |
+| `Assets/Scripts/ScriptableObjects/SOPoolSpaceObjects.cs` | `List<PoolEntry>` + `[CreateAssetMenu]` | ScriptableObject |
+| `Assets/Scripts/Helper/CameraHelper.cs` | `SpriteBoundsInCameraView` + `GetSpawnPositionAbove` | Pure C# static |
+
+### 2.2 MODIFIED files
+
+| File | What changed |
+|------|-------------|
+| `SpaceObject.cs` | +`IsAlive`, +`virtual Init()`, +`virtual ResetObject()`, +`virtual Die()`, IsAlive guard in OnTriggerEnter2D |
+| `Bullet.cs` | +`owner`, +`SetOwnerAndDamage` (returns this), +serialized `movementParameters`/`defaultDamage`, owner-based `OnCollision`, camera-view recycle, `Init`/`ResetObject` overrides |
+| `Enemy.cs` | +`StartFiring`/`StopFiring` (coroutine loop), +`Shoot` (pool Get + SetOwnerAndDamage), `TakeDamage`→`Die`, `Die`→pool Return, +serialized `weapon`/`fireInterval`/`startHealth`, `Init`/`ResetObject` overrides |
+| `PlayerController.cs` | +`hitPoints`/`startHitPoints`, `TakeDamage` (real HP + Die), `Die()` (log + mark dead), `FireCurrentWeapon` via pool + `SetOwnerAndDamage`, `OnCollision` routing (Enemy/Obstacle) |
+| `Collectable.cs` | +`PayloadDescription`, `Collect()` (detailed log + pool Return), `Init`/`ResetObject` (sprite toggle), `OnCollision` calls both player.Collect + own Collect |
+| `TestDummy.cs` | +`Init`/`ResetObject` (HP reset), `Die()` no-op (immortal), `StartFiring`/`Shoot` no-op |
+| `EnemyVulture.cs` | +serialized `movementParameters` (Q-T4-1a), +`Init(SO)` optional injection, +`Init`/`ResetObject` overrides |
+| `EnemyFalcon.cs` | Same as Vulture |
+| `ApplicationController.cs` | +`PoolSpaceObjects`/`ObjectPool` fields, +`InitObjectPool()` (load SO + Register), `Init()` calls `InitObjectPool()`, `SpawnTestObjects` uses pool for test bullet |
+
+## 3. WHAT YOU NEED TO DO (Unity Editor + Testing)
+
+### 3.1 Unity Editor: Create the pool config asset (BLOCKING — pool won't work without this)
+
+1. In the Project window: **Create → Game → Pool Space Objects**
+2. Name it `PoolSpaceObjects` and save it to **`Assets/Resources/`** (MUST be in a
+   Resources/ folder for `Resources.Load<SOPoolSpaceObjects>("PoolSpaceObjects")`).
+   If `Assets/Resources/` doesn't exist, create it first (right-click → Create → Folder).
+3. Add PoolEntry rows (defaults from Q-T4-6):
+
+   | Prefab (pick the SpaceObject COMPONENT) | initialSize |
+   |------------------------------------------|-------------|
+   | Player Bullet (PlayerBullet_MG prefab → its Bullet component) | 20 |
+   | Enemy Bullet (EnemyBulletBasic prefab → its Bullet component) | 20 |
+   | Enemy Vulture (EnemyVulture prefab → its EnemyVulture component) | 10 |
+   | Enemy Falcon (EnemyFalcon prefab → its EnemyFalcon component) | 10 |
+   | TestDummy (TestDummy prefab → its TestDummy component) | 1 |
+
+   > The `prefab` field is a **SpaceObject COMPONENT** reference — when you click
+   > the object picker, select the **prefab's Bullet / Enemy / ... component**, not
+   > the GameObject. The Inspector will show the component name.
+
+### 3.2 Unity Editor: Verify prefab setup (BLOCKING — collisions won't fire)
+
+For EVERY pooled prefab (PlayerBullet, EnemyBulletBasic, Vulture, Falcon, TestDummy,
+Collectable):
+
+- [ ] **Exactly ONE** SpaceObject-derived script on the prefab root (§2.2 rule).
+- [ ] **Collider2D** (BoxCollider2D / CircleCollider2D) with **Is Trigger = ON**.
+- [ ] **Rigidbody2D** with **Gravity Scale = 0** (required for 2D trigger events to fire).
+  - Per the brief: Rigidbody2D on Bullets + Player. EnemyBulletBasic needs one too.
+  - Enemies + Collectables + Obstacles also need one for their trigger pairs.
+
+### 3.3 Unity Editor: Create EnemyBulletBasic prefab (BLOCKING — enemies can't fire)
+
+1. Create a new prefab `Assets/Prefabs/Bullets/EnemyBulletBasic`:
+   - Bullet script (the SAME `Bullet.cs`)
+   - An enemy bullet sprite (any small projectile sprite)
+   - BoxCollider2D (Is Trigger ON) + Rigidbody2D (Gravity 0)
+   - Set the serialized `movementParameters` field on the Bullet to a SOMovementParameters
+     asset with **Direction = DOWN** (0, -1), Speed ~8, Pattern = Straight.
+     (Create a new SO: Create → Game → Movement Parameters, name it e.g. "EnemyBulletDown".)
+   - Set `defaultDamage = 1` (or whatever you want).
+2. Add it to the `PoolSpaceObjects` asset (row 2 in §3.1).
+
+### 3.4 Unity Editor: Assign enemy weapon (BLOCKING — enemies can't fire)
+
+1. Create a weapon SO for enemies:
+   - **Create → Game → Weapon Specs** → name it `EnemyBasicWeaponSpecs`
+   - Set: `weaponName = "Enemy Basic"`, `bulletPrefab = EnemyBulletBasic`,
+     `bulletMovement = EnemyBulletDown` (the SO from §3.3), `fireInterval = 1.0`,
+     `baseDamage = 1`, `damagePerLevel = {1}`.
+2. On the **Vulture** and **Falcon** prefabs: set the `weapon` field (on the
+   Enemy component) to `EnemyBasicWeaponSpecs`.
+   - Also set `fireInterval = 1.0` and `startHealth = 10` (or your preferred values).
+
+### 3.5 Unity Editor: Assign bullet movement + player weapon
+
+- [ ] **PlayerBullet_MG prefab**: set its `movementParameters` field to a
+      SOMovementParameters with Direction UP (0, 1), Speed ~15, Pattern Straight.
+      (If it was previously injected at spawn, it now CARRIES its own SO — Q-T4-1a.)
+- [ ] **PlayerBullet_MG prefab**: set `defaultDamage = 10` (or your preferred value).
+- [ ] **Vulture / Falcon prefabs**: set their `movementParameters` field to their
+      respective movement SO (Sine for Vulture, Eased for Falcon).
+      (If they were previously injected at spawn, they now CARRY their own SO.)
+- [ ] **PlayersShip prefab**: set `startHitPoints = 3` (default).
+
+### 3.6 Unity Editor: Verify scene prerequisites
+
+- [ ] `Camera.main` exists in the Main scene (tagged "MainCamera").
+- [ ] `Resources/UI` + `Resources/PlayersShip` still present (Tasks 1–3 boot).
+- [ ] The `PoolSpaceObjects` asset is in `Assets/Resources/` (§3.1).
+
+### 3.7 Play-Mode TEST MATRIX — Task 4 (pool in isolation)
+
+Run with `enableTestSpawns = ON`:
+
+- [ ] **1. Boot clean**: Console shows `[ApplicationController] ObjectPool registered N prefab type(s)`.
+      No "[ObjectPool] not registered" errors.
+- [ ] **2. Reuse**: Fire the player's weapon. Open the Hierarchy, find the bullet.
+      Note its `GetInstanceID()`. Let it leave the screen (recycled). Fire again.
+      The new bullet should have the SAME `GetInstanceID()` (recycled, not new).
+- [ ] **3. No leak**: Fire 50+ bullets rapidly. The Hierarchy bullet count stays
+      bounded (~initialSize + a few), not 50+.
+- [ ] **4. Grow-on-empty**: Fire a burst > initialSize. No null errors, pool grows.
+- [ ] **5. Guards**: (hard to test in Play Mode without code) — duplicate Register
+      logs a warning; Get on unregistered prefab logs an error + returns null.
+- [ ] **6. 30 s soak**: Console clean, no errors/warnings.
+
+### 3.8 Play-Mode TEST MATRIX — Task 5 (full combat)
+
+Run with `enableTestSpawns = ON`:
+
+- [ ] **1.** Player fires → pooled bullet, `Owner` = player, flies UP.
+- [ ] **2.** Player bullet hits TestDummy → TestDummy HP drops by bullet Damage;
+      bullet recycled (Hierarchy count bounded).
+- [ ] **3.** Enemy fires → pooled EnemyBulletBasic, `Owner` = that enemy, moves DOWN,
+      ~1 shot/s, stops when enemy dies.
+- [ ] **4.** Enemy bullet hits player → player HP drops (visible on HUD); bullet recycled.
+- [ ] **5.** Enemy at 0 HP → `Die()` → recycled (no double-spawn, Hierarchy bounded).
+- [ ] **6.** Player touches Collectable → `Collect()` log + collectable recycled/hidden.
+- [ ] **7.** Player touches enemy → player takes damage (HP drops).
+- [ ] **8.** Player at 0 HP → `Die()` → "Player has died." log.
+- [ ] **9.** No friendly fire: player bullet ≠ player; enemy bullet ≠ other enemy.
+- [ ] **10.** 30 s combat soak → Console clean, Hierarchy counts bounded.
+
+### 3.9 Final delivery checklist (before autumn break)
+
+- [ ] `enableTestSpawns` OFF + Play → boots clean, only the player (§2.5).
+- [ ] Console ZERO errors over a 60 s Play session.
+- [ ] No tags anywhere (Project Settings → Tags and Layers, rule 2.3).
+- [ ] One custom script per prefab (open each, rule 2.2).
+- [ ] A BUILD (File → Build Settings → Build) that runs without errors.
+
+## 4. KEY DESIGN DECISIONS (locked)
+
+| Question | Answer used |
+|----------|------------|
+| Q-T4-1: pooled config source | **(a)** Prefabs CARRY their SOMovementParameters (serialized on Bullet/Enemy). `Init()` reads its own field. Spawner can optionally override via `Init(SO)`. |
+| Q-T4-2: Get on empty queue | **(a)** Grow the pool (instantiate one more). |
+| Q-T4-3: Return of unknown object | **(a)** Warn + ignore. |
+| Q-T4-4: Count API | **(b)** No — keep API minimal (Register/Get/Return only). |
+| Q-T4-5: CameraHelper in Task 4 | **Yes** — created in `Assets/Scripts/Helper/CameraHelper.cs`. |
+| Q-T4-6: Pool defaults | Player Bullet 20 / Enemy Bullet 20 / Vulture 10 / Falcon 10 / TestDummy 1. |
+| Q-T5-1: Enemy weapon source | **(a)** New `EnemyBasicWeaponSpecs` SO (reuses Task 3 weapon system). |
+| Q-T5-2: StartFiring mechanism | **(b)** Coroutine (`WaitForSeconds` loop) — no Awaitable in project. |
+| Q-T5-3: Friendly fire | **Yes** — guards in `Bullet.OnCollision`. |
+| Q-T5-4: Player death + Collectable | Player: log "Player has died" + mark dead. Collectable: detailed log + pool Return. |
+| Q-T5-5: Contact damage values | Placeholder `1` for now (data-driven enemy stats = later task). |
+
+## 5. TROUBLESHOOTING (quick map)
+
+| Symptom | Likely cause / fix |
+|---|---|
+| "[ObjectPool] not registered" on Get | Prefab missing from PoolSpaceObjects list, or `InitObjectPool()` not run (§3.1). |
+| "returned but never created from a registered prefab" | A non-pooled object was Returned (e.g. the player). Use Despawn for the player. |
+| Bullet/enemy "resurrects" then NullRef | You called `Destroy` on a pooled object (must be `pool.Return`). |
+| Hierarchy count climbs during firing | Not recycling (still `Destroy`) OR double-Return (same instance enqueued twice). |
+| Enemy bullets fly UP instead of DOWN | EnemyBulletBasic movement SO direction is wrong (should be DOWN / (0,-1)). |
+| No enemy→player damage at all | Collider missing "Is Trigger: ON" or Rigidbody2D missing on the bullet (§3.2). |
+| Player self-damages on fire | Friendly-fire guard missing (Bullet.OnCollision, Q-T5-3). |
+| Enemy keeps firing after death | `Die()` must set `IsAlive=false` before `pool.Return`, and `ResetObject` must stop the coroutine. |
+| Enemy doesn't fire at all | `weapon` field null on the enemy prefab (§3.4). |
+| Bullet doesn't move | `movementParameters` field null on the bullet prefab (§3.5). |
+| "PoolSpaceObjects asset not found" | Asset not in a `Resources/` folder (§3.1). |
+
+## 6. EXPLICITLY NOT BUILT YET (after the autumn break)
+
+- Unique-ID / named pool API (the brief defers it — prefab refs are fine now).
+- Player lives / respawn / invulnerability frames (Die() is the hook; flow is later).
+- Real Collectable payloads (weapon switch / level-up via pickup).
+- Wave/spawn SCHEDULING, boss, scoring, HP UI.
+- Per-enemy data-driven HP/damage tables (placeholders for now, Q-T5-5).
+- Multi-bullet spread (SpreadGun literally firing 3).
+- InputController + audio refactor (template issues, flagged Task 1, deferred).
+
+## 7. CODE REVIEW WALK-THROUGH (suggested order for delivery)
+
+1. **Task 1**: `SpaceObject` base + the collision pipeline ("react to the other,
+   act on yourself") — the spine of the whole game.
+2. **Task 2**: `MovementPatterns` + `SOMovementParameters` (data-driven movement).
+3. **Task 3**: `SOWeaponSpecs` + `Weapon` (DATA / STATE / ACTOR split) + bullet damage.
+4. **Task 4**: `ObjectPool` — the two dictionaries + the generic `T` + the
+   `Init`/`ResetObject` hooks (show the Get/Return invariants).
+5. **Task 5**: the owner-based bullet (`SetOwnerAndDamage` returns this) + the
+   type-based collision routing + the death chain (`TakeDamage`→`Die`→pool).

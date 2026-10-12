@@ -10,6 +10,9 @@
 ///   3. The collision plumbing: the Unity OnTriggerEnter2D adapter, the shared
 ///      "both objects must be active" guard, and the virtual OnCollision hook
 ///      where each subclass decides what a collision means FOR ITSELF.
+///   4. (Task 4) The POOL lifecycle hooks: Init() + ResetObject() — called by
+///      ObjectPool on Get/Return, so the pool never reaches into subclass state.
+///   5. (Task 5) The shared death state + ritual: IsAlive + virtual Die().
 ///
 /// What is deliberately NOT here (rule: don't put in the base what derived
 /// classes don't need): health, damage, firing, movement. Damage is a
@@ -28,6 +31,13 @@ public abstract class SpaceObject : MonoBehaviour
     /// GameObject.activeSelf (an object may exist in the scene while inactive).
     /// </summary>
     public bool IsActive { get; private set; } = true;
+
+    /// <summary>
+    /// (Task 5) Is this object still ALIVE (not dead)? Distinct from IsActive:
+    /// IsActive = "in play / allowed to react", IsAlive = "not dead".
+    /// Set false by Die(); a pooled recycled object is inactive-but-alive.
+    /// </summary>
+    public bool IsAlive { get; private set; } = true;
 
     /// <summary>
     /// Marks the object active. Called by spawners and by the object itself.
@@ -59,6 +69,44 @@ public abstract class SpaceObject : MonoBehaviour
         Object.Destroy(gameObject);
     }
 
+    // ---- Task 4 additions: the pool's two lifecycle hooks ----
+
+    /// <summary>
+    /// (Task 4) Pool "Get" hook: make this object ready-for-use and active again.
+    /// Default just flips the shared state; subclasses override to also re-arm
+    /// their OWN per-object state (reset elapsed, re-cache spawnOrigin, reset
+    /// Damage/HP, (re)start firing, reposition).
+    /// Called by ObjectPool.Get, never by game code directly.
+    /// </summary>
+    public virtual void Init()
+    {
+        IsActive = true;
+    }
+
+    /// <summary>
+    /// (Task 4) Pool "Return" hook: stop + reset per-object behaviour BEFORE the
+    /// pool deactivates it (stop firing loops, reset timers/elapsed, clear
+    /// one-shot state). Called by ObjectPool.Return, never by game code directly.
+    /// </summary>
+    public virtual void ResetObject()
+    {
+        // default: no object-specific reset
+    }
+
+    // ---- Task 5 additions: shared death state + ritual ----
+
+    /// <summary>
+    /// (Task 5) The shared death ritual: mark dead, then (default) nothing —
+    /// subclasses override to add their own death behaviour (recycle to pool for
+    /// pooled objects, log + stop for the player, etc.).
+    /// Virtual so Player/Enemy can add death effects, drops, scoring, respawn.
+    /// </summary>
+    public virtual void Die()
+    {
+        IsAlive = false;
+        Debug.Log("[SpaceObject] " + name + " died.");
+    }
+
     /// <summary>
     /// Collision hook. Subclasses override to decide what it means for THEM to
     /// touch the other object. Protected: collision is event-driven, external
@@ -79,6 +127,7 @@ public abstract class SpaceObject : MonoBehaviour
         SpaceObject otherObject = other.GetComponent<SpaceObject>();
         if (otherObject == null) return;
         if (!IsActive || !otherObject.IsActive) return;
+        if (!IsAlive || !otherObject.IsAlive) return; // (Task 5) dead objects don't collide
 
         OnCollision(otherObject);
     }

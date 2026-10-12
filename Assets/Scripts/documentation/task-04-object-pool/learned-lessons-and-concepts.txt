@@ -1,0 +1,208 @@
+﻿# Task 4 — Object Pool · Learned Lessons & Concepts
+
+> The "how does it actually work" view. Concepts used by the Task 4 design,
+> explained the way they matter for THIS course (rules §2.1–§2.8).
+
+## 1. WHY pool at all — the GC / instantiation cost you are avoiding
+
+Every `Instantiate` is an allocation (new GameObject + components) and every
+`Object.Destroy` is a deallocation. In a bullet-hell you spawn/kill dozens of
+bullets and enemies PER SECOND. Two problems:
+
+- **Allocation churn** → spikes in CPU (object creation, component Awake/OnEnable)
+  and, in older Unity, GC pressure. A pool turns "create" into "take one I already
+  have" and "destroy" into "put it back".
+- **A uniform create/destroy surface** → instead of every spawner knowing
+  `Instantiate<Bullet>(prefab)` + `Destroy(go)`, everyone calls
+  `pool.Get<T>(prefab)` / `pool.Return(obj)`. One place to reason about lifetimes.
+
+The pool is a LIFECYCLE OPTIMIZATION + a CONSISTENT API. It changes NONE of the
+game rules (collision, damage, movement) — it only changes HOW objects come and go.
+That is why it slots in cleanly on top of Tasks 1–3 without touching their logic.
+
+## 2. `Dictionary` + `Queue` — why those two collections (the brief's exact choice)
+
+```
+pools          : Dictionary<SpaceObject, Queue<SpaceObject>>   prefab -> [instance, instance, ...]
+objectPrefabs  : Dictionary<SpaceObject, SpaceObject>           instance -> prefab
+```
+
+- **The outer Dictionary (prefab → queue)** gives O(1) "give me the pool for THIS
+  prefab type". Without it you'd scan a list every Get (O(n)) — the same per-frame
+  cost rule §2.6 forbids.
+- **The inner Queue** models "recycled instances waiting to be reused". FIFO is
+  natural here: the oldest recycled instance is the one you hand out next.
+  Enqueue = put back; Dequeue = take out. That is EXACTLY the brief's
+  "Register → Enqueue, Get → Dequeue, Return → Enqueue" story.
+- **The second Dictionary (instance → prefab)** is the "reverse index". `Return(obj)`
+  is handed an INSTANCE, not a prefab; this map tells the pool which queue it
+  belongs to in O(1) (otherwise `Return` would have to search every queue). This is
+  the non-obvious half of the design — remember: one map answers "where are the
+  instances for type X", the other answers "which type did this instance come from".
+
+**Why `SpaceObject` as the key (not `GameObject`, not `System.Type`):** the pool is
+typed around the COMPONENT (our base class). A `System.Type` key would lose the
+concrete prefab (two Vultures and two Falcons are both `typeof(EnemyVulture)`/
+`typeof(EnemyFalcon)` — fine — but it can't distinguish two prefabs of the SAME
+class). A `SpaceObject`-component key distinguishes each prefab instance, which is
+what the SOPoolSpaceObjects list is built from. This is "types not tags" (rule 2.3)
+applied to the pool's own identity.
+
+## 3. Generic `T` with `where T : SpaceObject` — what the constraint actually buys
+
+The brief spells this out; here is the mechanical payoff:
+
+```csharp
+public T Get<T>(T prefab) where T : SpaceObject
+```
+
+- Calling `Get<Bullet>(bulletProto)` the compiler specializes it to
+  `Get<Bullet>(Bullet prefab)` — so it RETURNS a `Bullet` (no cast, no
+  `GetComponent`) and REJECTS non-SpaceObject arguments. `T` becomes the concrete
+  type at the call site; the `where` clause is the guard that keeps the pool honest
+  (you cannot pool a plain GameObject or a Text).
+- Because `prefab` is a COMPONENT and `Object.Instantiate(component)` returns a
+  component of the same type, `T obj = Object.Instantiate(prefab)` compiles and
+  runs with zero down-casting. The type system carries the "this prefab has a
+  Bullet" knowledge all the way from the SO list → the pool → the caller.
+- This is the STRONGEST form of rule 2.3: not "no tags", but "the compiler refuses
+  to let you pool the wrong thing". The only thing the pool needs to know about an
+  object is that it is a `SpaceObject` — everything else flows through `T`.
+
+## 4. `Register` / `Get` / `Return` — the three verbs and their invariants
+
+| Verb     | When           | State change                                            | Queue op |
+|----------|----------------|---------------------------------------------------------|----------|
+| Register | once per type  | instantiate N inactive copies, map prefab→queue + inst→prefab | Enqueue ×N |
+| Get      | every spawn    | dequeue (or grow), SetActive(true), `obj.Init()`        | Dequeue  |
+| Return   | every recycle  | `obj.ResetObject()`, SetActive(false)                   | Enqueue  |
+
+Invariants to keep (they are what make it "a pool" and not a bag):
+1. An instance is EITHER in the queue (inactive) OR out (active) — never both.
+   `Get` removes it from the queue; `Return` puts it back. If you `Return` an
+   object that is already recycled, you'd enqueue it twice → the same instance is
+   "active" twice. (This is why `Return` on an unknown object must WARN, Q-T4-3.)
+2. `Get` never returns an instance that is already active. Dequeue guarantees that.
+3. The pool is the ONLY owner of a pooled instance's `SetActive` — game code never
+   `SetActive`/`Destroy` a pooled object directly. That keeps invariant 1 true.
+   (Destroying a pooled object would corrupt both dictionaries → the "leak"
+   failure mode. This is the #1 bug to avoid in Play-Mode testing, §10 below.)
+
+## 5. Why `Init()` / `ResetObject()` belong on the OBJECT, not on the pool
+
+The pool calls `obj.Init()` and `obj.ResetObject()` but does NOT know WHAT that
+means — that is the object's own job. This is §2.7 separation at its purest:
+
+- The pool knows the MECHANISM (activate / deactivate / recycle).
+- Each object knows its OWN state to reset (Bullet: elapsed + spawnOrigin; Enemy:
+  HP + firing loop; TestDummy: currentHealth).
+
+If the pool hard-coded "reset the Bullet's elapsed", it would need to know about
+every concrete type (bad coupling, and it would break for a 10th object type).
+Virtual hooks flip that: the pool stays generic, the objects stay self-contained.
+This is the SAME "react to the other, act on yourself" etiquette as Tasks 1–3 —
+here it is "the pool acts on the MECHANISM, the object acts on ITSELF".
+
+**Gotcha:** `Init()` is called every Get, so it must be IDEMPOTENT and cheap (no
+allocation, no Find/GetComponent — rule 2.6). It is not a one-time constructor; it
+is a "re-arm for reuse" step.
+
+## 6. The GameObject vs. Component prefab reference — the one real friction point
+
+The brief's pool is component-typed (`SpaceObject prefab`), but our Task 2/3 weapon
+SO stores `GameObject bulletPrefab`. These coexist with a one-line bridge at the
+call site (code-changes §6.1):
+
+```csharp
+Bullet proto = weapon.BulletPrefab.GetComponent<Bullet>();   // GameObject -> component
+Bullet b     = pool.Get<Bullet>(proto);                       // component -> pooled component
+```
+
+Why not just change `SOWeaponSpecs.bulletPrefab` to a `SpaceObject`/`Bullet`
+field? You COULD (cleaner long-term), but that would touch working Task 3 code and
+the SO asset (rule 2.1 "don't churn what works"). The bridge keeps the SO intact for
+this task and lets the component-typed pool do its job. When you later add MORE
+poolable SOs, converting their prefab fields to component refs (Q-T4-6) makes the
+bridge disappear — nothing else moves. This is the "easily extendable" goal: the
+design tolerates BOTH representations today and converges on the cleaner one later.
+
+**Remember the rule:** a `SpaceObject`-typed Inspector field still lets you "pick a
+prefab" — Unity binds it to the component on the prefab. So the Editor UX does not
+change; only the C# type gets stricter.
+
+## 7. "Grow on empty" — why Get is safe even if you under-sized the pool
+
+`Register` pre-fills `initialSize` (e.g. 10 enemies). But a heavy wave may need 25
+at once. If `Get` just returned null when the queue is empty, the game would
+silently drop spawns (a nasty, hard-to-debug "why did 15 enemies not appear?" bug).
+Instead, `Get` instantiates ONE more and adds it to the pool (code-changes §4, the
+`wasNew` branch). The pool is therefore a FLOOR, not a CAP: you pre-warm for the
+common case, and it self-extends under load. This is why the brief's `Get` has an
+`else` branch that instantiates. (Q-T4-2 confirms the default.)
+
+## 8. Why ObjectPool is plain C# and lives on the ApplicationController
+
+- **Plain C# (§2.4):** it has no Update, no Transform, no lifecycle — it is pure
+  bookkeeping over collections. A MonoBehaviour would be illegal-adjacent (you can't
+  `new` one) and would drag Unity into a class that doesn't need it.
+- **Owned by ApplicationController (§2.1/§2.7):** the controller is the existing
+  singleton that already spawns the player and test objects. The pool is a SERVICE;
+  the controller OWNS the service and exposes it. Objects (Bullet/Enemy) ask the
+  service — they never own it. This avoids a "PoolManager" singleton (we REUSE the
+  one controller we already have) and avoids scattering the pool across objects.
+
+## 9. The "index is ugly" problem the brief admits (and why we defer it)
+
+The brief shows spawning by list index: `PoolObjects[Random.Range(3,5)].prefab`.
+With 2 entries that's fine; with 20 it's a bug farm ("was it index 15 or 17?").
+The brief's own answer: introduce a UNIQUE ID. We do NOT build that in THIS task:
+
+- It is EXTRA scope (a name/ID field on PoolEntry + a `Get(string id)` overload)
+  that the brief explicitly calls "a later improvement".
+- The prefab-reference API is already type-safe and correct; the ID API is an
+  ergonomics layer on top, not a correctness need.
+- Building it now risks churning the data shape (PoolEntry) right before Task 5
+  depends on it.
+
+If you want to preview it, the shape is: `PoolEntry { string id; SpaceObject prefab; int initialSize; }`
++ `ObjectPool.GetById<T>(string id)` backed by a `Dictionary<string, SpaceObject>`
+built in `Register`. Keep it OFF the critical path until the brief asks for it.
+
+## 10. What "testing the pool" concretely means in Play Mode
+
+Observable, no test framework (pairs with code-changes §10):
+1. **Boot clean**: start Play; Console has NO "[ObjectPool] not registered" errors.
+2. **Reuse, not recreate**: log `b.GetInstanceID()` before `Return(b)` and after the
+   next `Get<Bullet>` — when the queue is non-empty they are the SAME ID (proves
+   recycling, not new allocations).
+3. **No leak**: spawn 50 bullets, recycle 50; the Hierarchy bullet count stays
+   bounded (≈ initialSize + max concurrent), it does NOT climb to 50.
+4. **Grow-on-empty**: spawn a burst larger than initialSize with no nulls, no errors.
+5. **Guard rails**: register a prefab twice → the duplicate warning fires once;
+   `Get` an unregistered prefab → the "not registered" error + null (no crash).
+6. **30 s soak**: spawn/recycle loop + clean Console (no red/yellow, no warnings).
+
+Every one of these is a property of the DICTIONARY+QUEUE invariants in §4 — if one
+fails, the bug is a broken invariant (double-enqueue, out-of-pool Destroy, or a
+missing map entry), not "Unity is flaky".
+
+## 11. Quick self-test (answer before checking code-changes-and-why.txt)
+
+1. Why two dictionaries and not one `List<SpaceObject>` per prefab?
+   *(List gives O(n) lookups and no O(1) "which queue does this instance belong to"
+     for Return. Dictionary gives O(1) type lookup; the second map gives O(1)
+     instance→type for Return.)*
+2. You `Return(bullet)` then immediately `Get<Bullet>`. Same instance?
+   *(Yes, when the queue is non-empty: Return enqueues it, Get dequeues it. Verify
+     with GetInstanceID — this IS the point of pooling.)*
+3. What goes wrong if game code calls `Destroy(pooledBullet)` directly?
+   *(The instance is removed from the scene but STILL in the queue + in
+     objectPrefabs. A later Get hands out a destroyed object → NullReferenceException
+     or a resurrected-inactive object. Pool instances must only leave via Return.)*
+4. Why is `Init()` on SpaceObject (virtual) and not in ObjectPool?
+   *(Separation (§2.7): the pool knows activate/recycle; each object knows its own
+     state to reset. Keeps the pool generic and extensible to any new SpaceObject
+     type with zero pool changes.)*
+5. `Get` when the queue is empty — return null or grow?
+   *(Grow (default): the pool is a floor, not a cap; returning null would silently
+     drop spawns under load, which is the worst kind of runtime bug.)*

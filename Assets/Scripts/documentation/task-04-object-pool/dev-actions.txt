@@ -1,0 +1,184 @@
+﻿# Task 4 — Object Pool · Dev Actions
+
+> The "what do I do / what's left" checklist. Tick items as they are completed.
+> STATUS: DESIGN STAGE (code NOT yet written). Work top to bottom; answer the
+> Open Questions BEFORE writing the wiring. Cross-task notes + combined test plan
+> live in ../IMPLEMENTATION-GUIDE-tasks-4-5.txt.
+
+## Teacher's brief (Finnish, summarized)
+
+- Implement a fully dynamic, GENERIC Object Pool. Purpose: keep in-game objects in
+  memory and REUSE them instead of constantly Instantiate/Destroy. Also give ONE
+  central, uniform interface to create & remove enemies, bullets, collectables, etc.
+- Build it on `Dictionary` + `Queue`, with THREE classes:
+  1. `PoolEntry` — `[Serializable]` helper: `SpaceObject prefab` + `int initialSize = 10`.
+  2. `SOPoolSpaceObjects` — ScriptableObject holding `List<PoolEntry> poolObjects`
+     (the pool config; one instance per game; adding a type = add a row, no code change).
+  3. `ObjectPool` — the pool itself:
+     `Dictionary<SpaceObject, Queue<SpaceObject>> pools` (prefab → queue),
+     `Dictionary<SpaceObject, SpaceObject> objectPrefabs` (instance → prefab),
+     + methods `Register<T>`, `Get<T>`, `Return<T>` (all `where T : SpaceObject`).
+- Mechanics: Register enqueues `initialSize` pre-instantiated (inactive) instances;
+  Get dequeues from the front (or instantiates one if empty), activates + calls `Init()`;
+  Return calls `ResetObject()`, deactivates, enqueues to the back.
+- Usage: ApplicationController loads the SOPoolSpaceObjects from a Resources folder,
+  builds the ObjectPool, and registers every entry. Then:
+  - firing a bullet = `ObjectPool.Get<Bullet>(weapon.BulletPrefab as Bullet)`;
+  - returning a bullet = in Bullet, when it is no longer in camera view,
+    `ObjectPool.Return(this)` (uses `CameraHelper.SpriteBoundsInCameraView`);
+  - spawning enemies = `ObjectPool.Get(...)` + position via `CameraHelper.GetSpawnPositionAbove(...)`.
+- The brief itself flags a limitation: referencing a prefab by LIST INDEX
+  (`PoolObjects[i]`) is not intuitive and a unique ID would be better. (Deferred —
+  see §Scope NOT-DONE.)
+
+## Current-code reality check (what EXISTS vs what the brief assumes)
+
+> This matters: the brief's code assumes names/behaviours that do NOT all exist yet.
+> Confirm each before coding.
+
+- [x] `SpaceObject` base EXISTS (IsActive/Activate/Deactivate/Despawn + collision).
+- [ ] `SpaceObject.Init()` — NOT present. MUST be added (pool Get calls it). (code-changes §3)
+- [ ] `SpaceObject.ResetObject()` — NOT present. MUST be added (pool Return calls it).
+- [ ] `ObjectPool`, `PoolEntry`, `SOPoolSpaceObjects` — NOT present. MUST be created.
+- [ ] `CameraHelper` — NOT present in the project (searched). Task 5's
+      `SpriteBoundsInCameraView` + `GetSpawnPositionAbove` need it. See Q-T4-5.
+- [ ] Bullet currently uses SPAWN-TIME injection (`Init(movementSO, damage)`). For the
+      pool's no-arg `Init()`, pooled prefabs should CARRY their config on the prefab.
+      See Q-T4-1 (the biggest integration decision).
+
+## ✅ Done
+
+- [x] Read the teacher's Task 4 brief + the ObjectPool diagram (two dictionaries,
+      PoolEntry, SOPoolSpaceObjects, Register/Get/Return, Get/Return calling Init/ResetObject).
+- [x] Audited current code: SpaceObject, Bullet, Enemy + subclasses, Collectable,
+      Obstacle, PlayerController, ApplicationController — found the integration points
+      (no Init/ResetObject yet; GameObject-based bullet refs; no CameraHelper).
+- [x] Wrote code-changes-and-why.txt (full reference implementation + why) + this file.
+
+## ⬜ To do — in this order
+
+### A. Decide the design (BEFORE writing code)
+- [ ] **A1.** Review code-changes-and-why.txt §1–§10 (esp. §2 component-refs, §3
+      SpaceObject hooks, §6 wiring + the GameObject→component bridge).
+- [ ] **A2.** Answer Open Questions Q-T4-1 … Q-T4-6 (teacher).
+- [ ] **A3.** Lock the SOPoolSpaceObjects contents (which prefabs + initialSize each) —
+      defaults proposed in Q-T4-6.
+
+### B. Write the code (order: base hooks → data → pool → wiring)
+- [ ] **B1.** EXTEND `Assets/Scripts/GameObjects/SpaceObject.cs`:
+      add `public virtual void Init()` and `public virtual void ResetObject()`
+      (exact code in code-changes §3.1). Keep Activate/Deactivate/Despawn.
+- [ ] **B2.** Create `Assets/Scripts/GameObjects/PoolEntry.cs` — `[Serializable]`
+      `SpaceObject prefab` + `int initialSize = 10` (code-changes §5).
+- [ ] **B3.** Create `Assets/Scripts/ScriptableObjects/SOPoolSpaceObjects.cs`
+      — ScriptableObject + `[CreateAssetMenu "Game/Pool Space Objects"]` +
+      `List<PoolEntry> poolObjects` + read-only `PoolObjects` (code-changes §5).
+- [ ] **B4.** Create `Assets/Scripts/Logic/ObjectPool.cs` — PLAIN C# (no MonoBehaviour,
+      §2.4): two dictionaries + `Register<T>`/`Get<T>`/`Return<T>` (code-changes §4).
+      Register the new .cs files in Assembly-CSharp.csproj.
+- [ ] **B5.** Per-object `Init()`/`ResetObject()` overrides (code-changes §3.2):
+      - `Bullet`: reset elapsed + spawnOrigin (+ movement source per Q-T4-1) in Init;
+      - `Enemy`: reset health + elapsed + (re)start firing in Init; stop firing in ResetObject;
+      - `TestDummy`: reset currentHealth in Init;
+      - `Collectable`: re-show/hide sprite.
+- [ ] **B6.** EXTEND `Assets/Scripts/ApplicationController.cs` (MODIFY in place, §2.1):
+      add `PoolSpaceObjects` + `ObjectPool` + `InitObjectPool()`; call them from `Init()`
+      (code-changes §6).
+- [ ] **B7.** Route PlayerController firing through the pool (the bridge, code-changes
+      §6.1): resolve weapon bullet prefab → Bullet component → `ObjectPool.Get<Bullet>(...)`.
+- [ ] **B8.** Build — zero errors/warnings; boot from Main scene (§2.5).
+- [ ] **B9.** Re-run the rule-compliance checklist (code-changes §9).
+- [ ] **B10.** Update the roadmap / AGENTS code map (workflow rule 7).
+
+### C. Unity editor work (after B compiles)
+- [ ] **C1.** Create the pool asset: Create → Game → Pool Space Objects →
+      `Assets/Resources/PoolSpaceObjects` (MUST be in a `Resources/` folder for the
+      `Resources.Load<SOPoolSpaceObjects>("PoolSpaceObjects")` in B6).
+- [ ] **C2.** Add PoolEntry rows (defaults — confirm in Q-T4-6), each `prefab` picked
+      from the prefab's component (Bullet / EnemyVulture / EnemyFalcon / TestDummy):
+        - Player Bullet   (PlayerBullet_MG)   initialSize 20
+        - Enemy Bullet    (EnemyBulletBasic)  initialSize 20   ← Task 5 prefab
+        - Enemy Vulture   (EnemyVulture)      initialSize 10
+        - Enemy Falcon    (EnemyFalcon)       initialSize 10
+        - TestDummy       (TestDummy)         initialSize 1
+- [ ] **C3.** Verify each pooled prefab: EXACTLY ONE SpaceObject-derived script (§2.2),
+      Collider2D (Is Trigger ON) + Rigidbody2D (Gravity 0) where it collides (§2.3/physics).
+- [ ] **C4.** Play-Mode test matrix (all must pass — see code-changes §10 + combined
+      guide §Test).
+
+## 📋 Open Questions (for the teacher — PENDING, fill in your answers)
+
+- **Q-T4-1.** Movement/damage CONFIG for pooled objects. The brief's pool calls a
+  NO-ARG `obj.Init()` (it cannot pass the weapon's movement/damage). Our Task 2/3
+  design INJECTS `Init(movementSO, damage)` at spawn. Pick ONE:
+  (a) pooled prefabs CARRY their config on the prefab (serialize `SOMovementParameters`
+      + default damage on Bullet/Enemy); the no-arg `Init()` reads its own prefab
+      values. Bullet "damage for the shot" is then set by the spawner AFTER Get via a
+      separate `SetDamage(int)` (Task 5's owner/damage covers this).  ← my DEFAULT;
+  (b) keep injection: after `Get<T>(prefab)`, the spawner calls a separate
+      `Init(so, damage)` (two-phase: pool.Init = state, spawner.Init = config).
+  (c) something else.
+  ANSWER: ______________________________
+  A)
+
+- **Q-T4-2.** `ObjectPool.Get<T>` when the queue is EMPTY: (a) grow the pool on the fly
+      (instantiate one more) — my DEFAULT, matches the brief; (b) return null and let
+      the caller handle it. Confirm (a)?
+  ANSWER: ______________________________
+  A)
+
+- **Q-T4-3.** Should `Return` on an object NOT from this pool (e.g. a player, or a
+  hand-instantiated bullet) (a) warn + ignore — my DEFAULT (brief's screenshot warns);
+  or (b) also push it into a pool if it matches a registered prefab? Confirm (a)?
+  ANSWER: ______________________________
+  A)
+
+- **Q-T4-4.** Should the pool expose a `Count<T>(prefab)` / total-alive helper for the
+      HUD/debug? (a) yes, a tiny read-only `int Count<T>(T prefab)` — my DEFAULT;
+  (b) no, keep the API minimal (Register/Get/Return only).
+  ANSWER: ______________________________
+  B) no , keep the API minimal (Register/Get/Return only).
+
+- **Q-T4-5.** `CameraHelper` does NOT exist in the project yet. Task 5 needs
+      `SpriteBoundsInCameraView(SpriteRenderer, Camera)` and
+      `GetSpawnPositionAbove(SR, Camera, index, count)`. Create it in THIS task
+      (Assets/Scripts/Helper/CameraHelper.cs, pure C# static, §2.4) so Task 5 can use
+      it — my DEFAULT; or should it be part of Task 5 only?
+  ANSWER: ______________________________
+  yes create it in THIS task (Assets/Scripts/Helper/CameraHelper.cs, pure C# static, §2.4) so Task 5 can use it.
+
+- **Q-T4-6.** Confirm (or change) the SOPoolSpaceObjects defaults (prefab + initialSize):
+  Player Bullet 20 / Enemy Bullet 20 / Enemy Vulture 10 / Enemy Falcon 10 / TestDummy 1.
+  ANSWER: ______________________________
+  looks good, keep these defaults.
+
+## 🎯 Scope — DONE in this task (strict)
+
+IN (must all work by the end of Task 4):
+1. `PoolEntry` (Serializable) + `SOPoolSpaceObjects` (ScriptableObject with the list).
+2. `ObjectPool` (plain C#) with `Register<T>`/`Get<T>`/`Return<T>`, two dictionaries,
+   pre-instantiation, grow-on-empty, duplicate/not-registered guards.
+3. `SpaceObject.Init()` + `ResetObject()` virtuals + per-object overrides.
+4. ApplicationController loads the pool asset + registers all entries; PlayerController
+   fires bullets THROUGH the pool (bridge).
+5. A Play-Mode spawn/recycle loop that is leak-free and console-clean.
+
+NOT DONE in this task (do NOT build these now):
+- ❌ Collision / owner / enemy-firing / camera-view recycling logic (that is Task 5).
+- ❌ A unique-ID / named-lookup pool API (the brief defers it — keep prefab refs).
+- ❌ Wave/spawn scheduling, boss, scoring, UI.
+- ❌ Renaming or rewriting PlayerController / ApplicationController (rule 2.1).
+
+AVOID (anti-goals):
+- ❌ Making ObjectPool a MonoBehaviour (rule 2.4).
+- ❌ Putting pool config in code (all in the SO asset — rule 2.8).
+- ❌ Using tags/strings to pick pooled objects (rule 2.3 — use types).
+- ❌ Per-frame Find/GetComponent (rule 2.6 — pool is O(1) cached).
+
+## 🚩 Assumptions (pending answers — safe defaults used in the design)
+
+- Tasks 1–3 are complete and working (SpaceObject + movement + weapons + collision).
+  This task ADDS pooling + the two SpaceObject hooks; it does NOT change their rules.
+- "Plain C#" for ObjectPool/PoolEntry = no MonoBehaviour, no Unity lifecycle.
+- The pooled prefabs are our current roster (Vulture/Falcon/TestDummy/Bullet) + the
+  new EnemyBulletBasic (Task 5), not the brief's example names (StraightJet/SineCopter).

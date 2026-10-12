@@ -3,28 +3,57 @@
 /// <summary>
 /// Enemy ship #2 (test roster — Task 2): a small FALCON fighter that moves
 /// down the screen with an EASED approach (its SOMovementParameters asset:
-/// pattern Eased — the first real consumer of the template's Kryzarel easing
-/// set, Q-T2-1). One of the 7 small enemy ships.
+/// pattern Eased). One of the 7 small enemy ships.
+///
+/// (Task 4 Q-T4-1a) The prefab CARRIES its SOMovementParameters — the
+/// serialized field is the default. A spawner can still override it by
+/// calling Init(SOMovementParameters) after pool Get (the old Task 2 API).
 ///
 /// Deliberately the SAME thin shape as EnemyVulture — the ONLY difference is
-/// which SOMovementParameters asset is injected at spawn. That is the
+/// which SOMovementParameters asset is on the prefab. That is the
 /// data-driven design working: behavior variation lives in DATA, not in code
-/// branches (rule 2.8), and adding the rest of the 7-ship roster is a new SO
-/// asset + a new thin subclass (or reuse of one), never new math code.
+/// branches (rule 2.8).
 /// </summary>
 public class EnemyFalcon : Enemy
 {
-    private SOMovementParameters movementParameters;
+    [Header("Movement (Task 4 Q-T4-1a: the prefab CARRIES its own movement SO)")]
+    [SerializeField] private SOMovementParameters movementParameters;
+
     private Vector2 spawnOrigin;
     private float elapsed;
     private bool initialized;
 
-    /// <summary>Injected at spawn (same pattern as Bullet — Q-T2-2).</summary>
+    /// <summary>
+    /// (Optional) Spawner injection — overrides the prefab's serialized
+    /// movementParameters. Call AFTER pool Get if you want a different SO
+    /// than the prefab's default. (The old Task 2 API, kept for flexibility.)
+    /// </summary>
     public void Init(SOMovementParameters parameters)
     {
-        movementParameters = parameters;
+        if (parameters != null) movementParameters = parameters;
         spawnOrigin = transform.position;
-        initialized = true;
+        initialized = movementParameters != null;
+    }
+
+    /// <summary>(Task 4) Pool "Get" hook — re-arm movement state.</summary>
+    public override void Init()
+    {
+        base.Init();
+        elapsed = 0f;
+        spawnOrigin = transform.position;
+        initialized = movementParameters != null;
+        if (!initialized)
+        {
+            Debug.LogWarning("[EnemyFalcon] '" + name + "' has no SOMovementParameters assigned — it will not move.");
+        }
+    }
+
+    /// <summary>(Task 4) Pool "Return" hook — reset movement state.</summary>
+    public override void ResetObject()
+    {
+        initialized = false;
+        elapsed = 0f;
+        base.ResetObject();
     }
 
     /// <summary>Runs the shared pattern math (this enemy's flavor: Eased via its SO asset).</summary>
