@@ -26,7 +26,7 @@ public class Enemy : SpaceObject, IDamageable
 {
     [Header("Stats")]
     [Tooltip("Starting health (reset on each pool Init).")]
-    [SerializeField] private int startHealth = 10;
+    [SerializeField] private int startHealth = 30;
 
     [Header("Firing (Task 5)")]
     [Tooltip("The weapon the enemy fires with (Task 5 Q-T5-1: an SOWeaponSpecs asset — reuses the Task 3 weapon system).")]
@@ -35,6 +35,18 @@ public class Enemy : SpaceObject, IDamageable
     [SerializeField] protected float fireInterval = 1f;
 
     private int health;
+
+    /// <summary>
+    /// Initialize health from the serialized startHealth on object creation.
+    /// This runs for BOTH pool-spawned enemies (Init() also sets it) and
+    /// directly-instantiated enemies (the test harness). Without this, health
+    /// defaults to 0 and the enemy dies on the first hit.
+    /// </summary>
+    protected virtual void Awake()
+    {
+        health = startHealth;
+    }
+
     private bool firing;
     private Coroutine firingRoutine;
 
@@ -48,6 +60,7 @@ public class Enemy : SpaceObject, IDamageable
     public virtual void TakeDamage(int amount)
     {
         health -= amount;
+        Debug.Log($"[Enemy] '{name}' took {amount} damage → HP: {health}");
         if (health <= 0)
         {
             Die();
@@ -90,9 +103,10 @@ public class Enemy : SpaceObject, IDamageable
     }
 
     /// <summary>
-    /// (Task 5) Start the delayed firing loop. Uses a coroutine (Q-T5-2b —
-    /// Awaitable is not in the project; a standard WaitForSeconds loop is
-    /// the equivalent). Self-terminates on death / deactivation.
+    /// (Task 5) Start the delayed firing loop. Public so non-pool spawn paths
+    /// (the test harness, ad-hoc scripts) can call it after Instantiate.
+    /// Uses a coroutine (Q-T5-2b — Awaitable is not in the project; a standard
+    /// WaitForSeconds loop is the equivalent). Self-terminates on death / deactivation.
     /// </summary>
     public virtual void StartFiring()
     {

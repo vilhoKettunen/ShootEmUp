@@ -110,22 +110,36 @@ public class Bullet : SpaceObject
     /// </summary>
     protected override void OnCollision(SpaceObject other)
     {
+        // Ignore collisions with the owner — prevents self-hit at spawn time
+        // (a bullet spawns near its shooter and would otherwise instantly
+        // overlap the shooter's collider on the first physics step).
+        if (other == owner) return;
+
         bool playerShot = owner is PlayerController;
         bool enemyShot  = owner is Enemy;
 
+        bool hitValidTarget = false;
+
         if (playerShot && other is IDamageable d && !(other is PlayerController))
         {
+            Debug.Log($"[Bullet] Player shot hits '{other.name}' for {Damage} damage");
             d.TakeDamage(Damage);
+            hitValidTarget = true;
         }
         else if (enemyShot && other is PlayerController p && !(other is Enemy))
         {
+            Debug.Log($"[Bullet] Enemy shot hits '{other.name}' for {Damage} damage");
             p.TakeDamage(Damage);
+            hitValidTarget = true;
         }
 
-        // Spent — return to the pool (Task 4), NOT Destroy.
-        // (Task 5 friendly-fire guard: a bullet that hits a non-damageable
-        // obstacle / the wrong side is still spent and recycled.)
-        ApplicationController.Instance.ObjectPool.Return(this);
+        // Only consume the bullet when it actually hit a valid target.
+        // Bullets that overlap a non-target (their own shooter, a friendly,
+        // an obstacle) simply pass through and keep flying.
+        if (hitValidTarget)
+        {
+            ApplicationController.Instance.ObjectPool.Return(this);
+        }
     }
 
     private void Update()

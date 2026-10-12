@@ -20,7 +20,22 @@ public static class CameraHelper
     {
         if (sr == null || cam == null) return false;
 
+        // Check the CENTER first: for small objects (bullets) the 4 corners of
+        // the bounds are often just outside the viewport even while the object
+        // is clearly on screen, so a corner-only test recycles them too early.
+        // The center is the reliable "is it on screen" signal.
         Bounds b = sr.bounds;
+        Vector3 center = b.center;
+        Vector3 centerViewport = cam.WorldToViewportPoint(center);
+        if (centerViewport.x >= 0f && centerViewport.x <= 1f &&
+            centerViewport.y >= 0f && centerViewport.y <= 1f &&
+            centerViewport.z > 0f)
+        {
+            return true;
+        }
+
+        // Fall back to the corners so a large object that straddles the edge is
+        // still considered "in view" while part of it is on screen.
         Vector3[] corners = new Vector3[]
         {
             new Vector3(b.min.x, b.min.y, b.center.z),

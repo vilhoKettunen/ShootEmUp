@@ -126,11 +126,12 @@ public class ApplicationController : SingletonMono<ApplicationController>
                 + (bullet.MovementParameters != null ? bullet.MovementParameters.name : "NONE ASSIGNED"));
         }
 
-        if (testDummyPrefab != null)
-        {
-            Instantiate(testDummyPrefab, testDummySpawnPosition, Quaternion.identity);
-            Debug.Log("[Test] Spawned immortal TestDummy at " + testDummySpawnPosition);
-        }
+        // TestDummy removed — no longer useful now that real enemies have proper HP + logging.
+        // if (testDummyPrefab != null)
+        // {
+        //     Instantiate(testDummyPrefab, testDummySpawnPosition, Quaternion.identity);
+        //     Debug.Log("[Test] Spawned immortal TestDummy at " + testDummySpawnPosition);
+        // }
 
         if (debugText != null)
         {
@@ -173,6 +174,11 @@ public class ApplicationController : SingletonMono<ApplicationController>
             falcon.Init(movement);
         }
 
+        // (Task 5) The Instantiate + Init(movement) path above only sets up
+        // movement — it does NOT start the firing loop (that lives in the pool
+        // Init() hook). Start it explicitly so enemies spawned here can shoot.
+        spawnedEnemy.StartFiring();
+
         Debug.Log("[Test] Spawned " + label + " at " + position
             + " (pattern: " + (movement != null ? movement.Pattern : "NONE")
             + ", speed: " + (movement != null ? movement.Speed : 0) + ")");
@@ -183,6 +189,12 @@ public class ApplicationController : SingletonMono<ApplicationController>
         // We've left the start menu — reveal the in-game HUD (it was hidden in
         // Init() so it doesn't show behind the menu).
         UiViewHud.Instance?.Show();
+
+        // Push the player's initial HP so the HUD shows the correct value on start.
+        if (player != null)
+        {
+            UiViewHud.Instance?.UpdateHealth(player.HitPoints);
+        }
     }
 
     public void QuitGame()

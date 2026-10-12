@@ -54,12 +54,12 @@ public class UiViewHud : UiView
         }
     }
 
-    /// <summary>Push the TestDummy's HP into the HUD (test dummy is immortal).</summary>
+    /// <summary>Push the player's HP into the HUD.</summary>
     public void UpdateHealth(int health)
     {
         if (healthText != null)
         {
-            healthText.text = "Dummy HP: " + health;
+            healthText.text = "HP: " + health;
         }
     }
 }

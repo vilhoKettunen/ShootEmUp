@@ -33,7 +33,7 @@ public class PlayerController : SpaceObject, IDamageable
 
     [Header("Health (Task 5)")]
     [Tooltip("Player hit points. At 0 the player dies (Die). Lives / respawn are a LATER task (Q-T5-4).")]
-    [SerializeField] private int startHitPoints = 3;
+    [SerializeField] private int startHitPoints = 100;
 
     private int hitPoints;
 
